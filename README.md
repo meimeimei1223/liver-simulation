@@ -4,7 +4,7 @@ Real-time soft-body physics simulation of a liver using XPBD (Extended Position 
 
 ## 🎮 Live Demo
 
-**[Try it now!](https://meimeimei1223.github.io/)**
+**[Try it now!](https://meimeimei1223.github.io/liver-simulation/)**
 
 ## ✨ Features
 
