@@ -68,6 +68,46 @@
             border-radius: 4px;
             font-size: 12px;
         }
+
+        /* ===== WebXR VRボタン ===== */
+        #vr-button {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
+            color: #fff;
+            border: none;
+            border-radius: 30px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
+            transition: all 0.2s ease;
+            display: none; /* WebXR対応時のみ表示 */
+            z-index: 100;
+        }
+        #vr-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(0, 212, 255, 0.6);
+        }
+        #vr-button.active {
+            background: linear-gradient(135deg, #ff6b6b, #cc3333);
+            box-shadow: 0 4px 20px rgba(255, 107, 107, 0.4);
+        }
+        #vr-button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        #webxr-status {
+            position: absolute;
+            bottom: 70px;
+            right: 20px;
+            color: #aaa;
+            font-size: 12px;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -89,15 +129,21 @@ model/liver_tetrahedral_mesh.txt
         <p>Tetrahedra: <span id="tets">0</span></p>
         <p>Vis Vertices: <span id="visVerts">0</span></p>
         <p>Mode: <span id="meshMode">-</span></p>
+        <p id="vr-mode-indicator" style="color:#00d4ff;display:none;">🥽 VR Mode</p>
     </div>
     <div class="controls" style="display:none;" id="controls">
         <b>Controls:</b><br>
         Left Drag: Rotate camera<br>
         Scroll: Zoom<br>
-        Click on mesh: Grab & drag<br>
+        Click on mesh: Grab &amp; drag<br>
         F1: Toggle wireframe<br>
-        F2: Reset shape
+        F2: Reset shape<br>
+        <span style="color:#00d4ff;">VR: Trigger = Grab</span>
     </div>
+
+    <!-- WebXR VRボタン -->
+    <button id="vr-button">🥽 Enter VR</button>
+    <div id="webxr-status"></div>
 
     <!-- Vertex Shader -->
     <script id="vertexShader" type="x-shader/x-vertex">
@@ -132,17 +178,14 @@ model/liver_tetrahedral_mesh.txt
         uniform vec3 uViewPos;
         
         void main() {
-            // Ambient
             float ambientStrength = 0.3;
             vec3 ambient = ambientStrength * uLightColor;
             
-            // Diffuse
             vec3 norm = normalize(vNormal);
             vec3 lightDir = normalize(uLightPos - vFragPos);
             float diff = max(dot(norm, lightDir), 0.0);
             vec3 diffuse = diff * uLightColor;
             
-            // Specular
             float specularStrength = 0.5;
             vec3 viewDir = normalize(uViewPos - vFragPos);
             vec3 reflectDir = reflect(-lightDir, norm);
@@ -179,24 +222,17 @@ model/liver_tetrahedral_mesh.txt
     
     <script>
     //=========================================================================
-    // Configuration - File Paths
+    // Configuration
     //=========================================================================
     const CONFIG = {
-        // モデルファイルのパス
         tetMeshPath: 'model/liver_tetrahedral_mesh.txt',
         visMeshPath: 'model/liver.obj',
-        
-        // 物理パラメータ
         edgeCompliance: 1.0,
         volCompliance: 0.0,
-        
-        // カメラ初期設定（肝臓用）
         cameraRadius: 20,
         cameraYaw: 0,
         cameraPitch: 10,
         cameraFov: 45,
-        
-        // フォールバック用カメラ設定（テストメッシュ用）
         fallbackCameraRadius: 5
     };
 
@@ -205,12 +241,14 @@ model/liver_tetrahedral_mesh.txt
     //=========================================================================
     (async function() {
         const canvas = document.getElementById('canvas');
-        const gl = canvas.getContext('webgl', { antialias: true });
+
+        // WebXR requires 'xr-compatible' context
+        const gl = canvas.getContext('webgl', {
+            antialias: true,
+            xrCompatible: true   // ← WebXR必須
+        });
         
-        if (!gl) {
-            alert('WebGL not supported');
-            return;
-        }
+        if (!gl) { alert('WebGL not supported'); return; }
 
         //=====================================================================
         // Shader Compilation
@@ -252,11 +290,10 @@ model/liver_tetrahedral_mesh.txt
         );
 
         //=====================================================================
-        // Matrix Math
+        // Matrix Math (変更なし)
         //=====================================================================
         const mat4 = {
             create: () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
-            
             perspective: (fov, aspect, near, far) => {
                 const f = 1.0 / Math.tan(fov / 2);
                 const nf = 1 / (near - far);
@@ -267,7 +304,6 @@ model/liver_tetrahedral_mesh.txt
                     0, 0, 2*far*near*nf, 0
                 ]);
             },
-            
             lookAt: (eye, center, up) => {
                 const z = normalize(sub(eye, center));
                 const x = normalize(cross(up, z));
@@ -279,17 +315,13 @@ model/liver_tetrahedral_mesh.txt
                     -dot(x,eye), -dot(y,eye), -dot(z,eye), 1
                 ]);
             },
-            
             multiply: (a, b) => {
                 const out = new Float32Array(16);
-                for (let i = 0; i < 4; i++) {
-                    for (let j = 0; j < 4; j++) {
+                for (let i = 0; i < 4; i++)
+                    for (let j = 0; j < 4; j++)
                         out[i*4+j] = a[j]*b[i*4] + a[4+j]*b[i*4+1] + a[8+j]*b[i*4+2] + a[12+j]*b[i*4+3];
-                    }
-                }
                 return out;
             },
-
             invert: (m) => {
                 const out = new Float32Array(16);
                 const m00=m[0],m01=m[1],m02=m[2],m03=m[3],m10=m[4],m11=m[5],m12=m[6],m13=m[7];
@@ -310,7 +342,8 @@ model/liver_tetrahedral_mesh.txt
                 out[12]=(m11*b07-m10*b09-m12*b06)*det;out[13]=(m00*b09-m01*b07+m02*b06)*det;
                 out[14]=(m31*b01-m30*b03-m32*b00)*det;out[15]=(m20*b03-m21*b01+m22*b00)*det;
                 return out;
-            }
+            },
+            fromXRPose: (m) => new Float32Array(m)  // XRViewerPose用
         };
         
         function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
@@ -319,7 +352,7 @@ model/liver_tetrahedral_mesh.txt
         function normalize(v) { const l = Math.sqrt(dot(v,v)); return l > 0 ? [v[0]/l, v[1]/l, v[2]/l] : v; }
 
         //=====================================================================
-        // Orbit Camera
+        // Orbit Camera (変更なし)
         //=====================================================================
         const camera = {
             target: [0, 0, 0],
@@ -327,7 +360,6 @@ model/liver_tetrahedral_mesh.txt
             yaw: CONFIG.cameraYaw,
             pitch: CONFIG.cameraPitch,
             fov: CONFIG.cameraFov,
-            
             getPosition: function() {
                 const yawRad = this.yaw * Math.PI / 180;
                 const pitchRad = this.pitch * Math.PI / 180;
@@ -337,48 +369,32 @@ model/liver_tetrahedral_mesh.txt
                     this.target[2] + this.radius * Math.cos(pitchRad) * Math.cos(yawRad)
                 ];
             },
-            
             getViewMatrix: function() {
                 return mat4.lookAt(this.getPosition(), this.target, [0, 1, 0]);
             },
-            
             getProjectionMatrix: function(aspect) {
                 return mat4.perspective(this.fov * Math.PI / 180, aspect, 0.1, 100);
             }
         };
 
         //=====================================================================
-        // Load WASM Module
+        // Load WASM + Meshes (変更なし)
         //=====================================================================
         document.getElementById('loading').textContent = 'Loading WASM...';
         const Module = await SoftBodyModule();
-        console.log('WASM loaded');
-
-        //=====================================================================
-        // Load Mesh Files
-        //=====================================================================
-        document.getElementById('loading').textContent = 'Loading meshes...';
         
+        document.getElementById('loading').textContent = 'Loading meshes...';
         let tetData, objData;
         let usingFallback = false;
         
         try {
             const tetResponse = await fetch(CONFIG.tetMeshPath);
             const objResponse = await fetch(CONFIG.visMeshPath);
-            
-            if (!tetResponse.ok || !objResponse.ok) {
-                throw new Error('Mesh files not found');
-            }
-            
+            if (!tetResponse.ok || !objResponse.ok) throw new Error('not found');
             tetData = await tetResponse.text();
             objData = await objResponse.text();
-            console.log('Loaded liver meshes from model/ folder');
-            
-        } catch (e) {
-            console.warn('Mesh files not found, using fallback:', e.message);
+        } catch(e) {
             usingFallback = true;
-            
-            // フォールバック用テストメッシュ
             tetData = `VERTICES
 0 0 0
 1 0 0
@@ -406,54 +422,30 @@ SURFACE_TRIANGLES
 0 1 4
 0 4 2
 1 4 2`;
-
-            objData = `v 0 0 0
-v 1 0 0
-v 0.5 0.866 0
-v 0.5 0.289 0.816
-v 0.5 0.289 -0.816
-f 1 3 2
-f 1 2 4
-f 1 4 3
-f 2 3 4
-f 1 2 5
-f 1 5 3
-f 2 5 3`;
-
+            objData = `v 0 0 0\nv 1 0 0\nv 0.5 0.866 0\nv 0.5 0.289 0.816\nv 0.5 0.289 -0.816\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\nf 1 2 5\nf 1 5 3\nf 2 5 3`;
             camera.radius = CONFIG.fallbackCameraRadius;
-            
-            // エラー表示（3秒後に消える）
             document.getElementById('error').style.display = 'block';
-            setTimeout(() => {
-                document.getElementById('error').style.display = 'none';
-            }, 5000);
+            setTimeout(() => { document.getElementById('error').style.display = 'none'; }, 5000);
         }
 
-        //=====================================================================
-        // Create SoftBody
-        //=====================================================================
         document.getElementById('loading').textContent = 'Creating simulation...';
         const softBody = Module.createSoftBodyFromData(
-            tetData, objData, 
-            CONFIG.edgeCompliance, 
-            CONFIG.volCompliance
+            tetData, objData, CONFIG.edgeCompliance, CONFIG.volCompliance
         );
         
-        // Update info panel
         document.getElementById('particles').textContent = softBody.getNumParticles();
         document.getElementById('tets').textContent = softBody.getNumTets();
         document.getElementById('visVerts').textContent = softBody.getNumVisVerts();
         document.getElementById('meshMode').textContent = usingFallback ? 'Test Mesh' : 'Liver';
 
         //=====================================================================
-        // WebGL Buffers
+        // WebGL Buffers (変更なし)
         //=====================================================================
         const visPositionBuffer = gl.createBuffer();
         const visNormalBuffer = gl.createBuffer();
         const visIndexBuffer = gl.createBuffer();
         const tetEdgeBuffer = gl.createBuffer();
         
-        // Initialize index buffer (static)
         const indices = softBody.getVisIndices();
         const indexArray = new Uint16Array(indices.length);
         for (let i = 0; i < indices.length; i++) indexArray[i] = indices[i];
@@ -467,95 +459,114 @@ f 2 5 3`;
             const positions = softBody.getVisPositions();
             gl.bindBuffer(gl.ARRAY_BUFFER, visPositionBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW);
-            
             const normals = softBody.getVisNormals();
             gl.bindBuffer(gl.ARRAY_BUFFER, visNormalBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.DYNAMIC_DRAW);
-            
             const tetEdges = softBody.getTetEdgeVertices();
             gl.bindBuffer(gl.ARRAY_BUFFER, tetEdgeBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(tetEdges), gl.DYNAMIC_DRAW);
             numTetEdgeVerts = tetEdges.length / 3;
         }
-        
         updateBuffers();
 
         //=====================================================================
-        // Raycasting
+        // Raycasting (変更なし)
         //=====================================================================
         function screenToWorldRay(screenX, screenY) {
             const rect = canvas.getBoundingClientRect();
             const x = ((screenX - rect.left) / rect.width) * 2 - 1;
             const y = 1 - ((screenY - rect.top) / rect.height) * 2;
-            
             const aspect = canvas.width / canvas.height;
             const proj = camera.getProjectionMatrix(aspect);
             const view = camera.getViewMatrix();
             const invVP = mat4.invert(mat4.multiply(proj, view));
-            
             function transformPoint(m, p) {
                 const w = m[3]*p[0] + m[7]*p[1] + m[11]*p[2] + m[15];
-                return [
-                    (m[0]*p[0] + m[4]*p[1] + m[8]*p[2] + m[12]) / w,
-                    (m[1]*p[0] + m[5]*p[1] + m[9]*p[2] + m[13]) / w,
-                    (m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14]) / w
-                ];
+                return [(m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12])/w,
+                        (m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13])/w,
+                        (m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14])/w];
             }
-            
             const near = transformPoint(invVP, [x, y, -1]);
-            const far = transformPoint(invVP, [x, y, 1]);
-            const dir = normalize(sub(far, near));
-            
-            return { origin: near, direction: dir };
+            const far  = transformPoint(invVP, [x, y,  1]);
+            return { origin: near, direction: normalize(sub(far, near)) };
         }
 
         function rayTriangleIntersect(origin, dir, v0, v1, v2) {
             const EPSILON = 0.000001;
-            const edge1 = sub(v1, v0);
-            const edge2 = sub(v2, v0);
+            const edge1 = sub(v1, v0), edge2 = sub(v2, v0);
             const h = cross(dir, edge2);
             const a = dot(edge1, h);
             if (a > -EPSILON && a < EPSILON) return null;
-            const f = 1.0 / a;
-            const s = sub(origin, v0);
+            const f = 1.0 / a, s = sub(origin, v0);
             const u = f * dot(s, h);
             if (u < 0 || u > 1) return null;
             const q = cross(s, edge1);
             const v = f * dot(dir, q);
             if (v < 0 || u + v > 1) return null;
             const t = f * dot(edge2, q);
-            if (t > EPSILON) {
-                return {
-                    t: t,
-                    point: [origin[0]+dir[0]*t, origin[1]+dir[1]*t, origin[2]+dir[2]*t]
-                };
-            }
+            if (t > EPSILON) return { t, point: [origin[0]+dir[0]*t, origin[1]+dir[1]*t, origin[2]+dir[2]*t] };
             return null;
         }
 
         function raycastMesh(ray) {
             const positions = softBody.getVisPositions();
-            const indices = softBody.getVisIndices();
-            
+            const idx = softBody.getVisIndices();
             let closest = null;
-            
-            for (let i = 0; i < indices.length; i += 3) {
-                const i0 = indices[i], i1 = indices[i+1], i2 = indices[i+2];
-                const v0 = [positions[i0*3], positions[i0*3+1], positions[i0*3+2]];
-                const v1 = [positions[i1*3], positions[i1*3+1], positions[i1*3+2]];
-                const v2 = [positions[i2*3], positions[i2*3+1], positions[i2*3+2]];
-                
+            for (let i = 0; i < idx.length; i += 3) {
+                const i0=idx[i], i1=idx[i+1], i2=idx[i+2];
+                const v0=[positions[i0*3],positions[i0*3+1],positions[i0*3+2]];
+                const v1=[positions[i1*3],positions[i1*3+1],positions[i1*3+2]];
+                const v2=[positions[i2*3],positions[i2*3+1],positions[i2*3+2]];
                 const hit = rayTriangleIntersect(ray.origin, ray.direction, v0, v1, v2);
-                if (hit && (!closest || hit.t < closest.t)) {
-                    closest = hit;
-                }
+                if (hit && (!closest || hit.t < closest.t)) closest = hit;
             }
-            
             return closest;
         }
 
         //=====================================================================
-        // Input Handling
+        // 共通描画関数 - 通常モード・VRモード両方で使う
+        //=====================================================================
+        function drawScene(viewMatrix, projMatrix, viewPos) {
+            const model = mat4.create();
+            
+            gl.useProgram(mainProgram);
+            gl.uniformMatrix4fv(gl.getUniformLocation(mainProgram, 'uModel'), false, model);
+            gl.uniformMatrix4fv(gl.getUniformLocation(mainProgram, 'uView'), false, viewMatrix);
+            gl.uniformMatrix4fv(gl.getUniformLocation(mainProgram, 'uProjection'), false, projMatrix);
+            gl.uniform3fv(gl.getUniformLocation(mainProgram, 'uLightPos'), viewPos);
+            gl.uniform3f(gl.getUniformLocation(mainProgram, 'uLightColor'), 1.0, 1.0, 1.0);
+            gl.uniform4f(gl.getUniformLocation(mainProgram, 'uColor'), 0.8, 0.2, 0.2, 1.0);
+            gl.uniform3fv(gl.getUniformLocation(mainProgram, 'uViewPos'), viewPos);
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, visPositionBuffer);
+            const aPos = gl.getAttribLocation(mainProgram, 'aPosition');
+            gl.enableVertexAttribArray(aPos);
+            gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, visNormalBuffer);
+            const aNorm = gl.getAttribLocation(mainProgram, 'aNormal');
+            gl.enableVertexAttribArray(aNorm);
+            gl.vertexAttribPointer(aNorm, 3, gl.FLOAT, false, 0, 0);
+            
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, visIndexBuffer);
+            gl.drawElements(gl.TRIANGLES, numIndices, gl.UNSIGNED_SHORT, 0);
+            
+            if (showWireframe && numTetEdgeVerts > 0) {
+                gl.useProgram(wireProgram);
+                gl.uniformMatrix4fv(gl.getUniformLocation(wireProgram, 'uModel'), false, model);
+                gl.uniformMatrix4fv(gl.getUniformLocation(wireProgram, 'uView'), false, viewMatrix);
+                gl.uniformMatrix4fv(gl.getUniformLocation(wireProgram, 'uProjection'), false, projMatrix);
+                gl.uniform4f(gl.getUniformLocation(wireProgram, 'uColor'), 0.0, 1.0, 0.5, 1.0);
+                gl.bindBuffer(gl.ARRAY_BUFFER, tetEdgeBuffer);
+                const aWirePos = gl.getAttribLocation(wireProgram, 'aPosition');
+                gl.enableVertexAttribArray(aWirePos);
+                gl.vertexAttribPointer(aWirePos, 3, gl.FLOAT, false, 0, 0);
+                gl.drawArrays(gl.LINES, 0, numTetEdgeVerts);
+            }
+        }
+
+        //=====================================================================
+        // Input Handling (変更なし)
         //=====================================================================
         let isDragging = false;
         let isGrabbing = false;
@@ -565,11 +576,9 @@ f 2 5 3`;
         
         canvas.addEventListener('mousedown', (e) => {
             lastMouse = { x: e.clientX, y: e.clientY };
-            
             if (e.button === 0) {
                 const ray = screenToWorldRay(e.clientX, e.clientY);
                 const hit = raycastMesh(ray);
-                
                 if (hit) {
                     isGrabbing = true;
                     grabDistance = hit.t;
@@ -581,64 +590,42 @@ f 2 5 3`;
                 }
             }
         });
-        
         canvas.addEventListener('mousemove', (e) => {
             const dx = e.clientX - lastMouse.x;
             const dy = e.clientY - lastMouse.y;
-            
             if (isGrabbing) {
                 const ray = screenToWorldRay(e.clientX, e.clientY);
-                const newPos = [
-                    ray.origin[0] + ray.direction[0] * grabDistance,
-                    ray.origin[1] + ray.direction[1] * grabDistance,
-                    ray.origin[2] + ray.direction[2] * grabDistance
-                ];
+                const newPos = [ray.origin[0]+ray.direction[0]*grabDistance, ray.origin[1]+ray.direction[1]*grabDistance, ray.origin[2]+ray.direction[2]*grabDistance];
                 softBody.moveGrabbed(newPos[0], newPos[1], newPos[2], 0, 0, 0);
             } else if (isDragging) {
                 camera.yaw -= dx * 0.3;
                 camera.pitch += dy * 0.3;
                 camera.pitch = Math.max(-89, Math.min(89, camera.pitch));
             }
-            
             lastMouse = { x: e.clientX, y: e.clientY };
         });
-        
         canvas.addEventListener('mouseup', (e) => {
-            if (isGrabbing) {
-                softBody.endGrab(0, 0, 0, 0, 0, 0);
-                isGrabbing = false;
-            }
+            if (isGrabbing) { softBody.endGrab(0,0,0,0,0,0); isGrabbing = false; }
             isDragging = false;
             canvas.style.cursor = 'default';
         });
-        
         canvas.addEventListener('mouseleave', () => {
-            if (isGrabbing) {
-                softBody.endGrab(0, 0, 0, 0, 0, 0);
-                isGrabbing = false;
-            }
+            if (isGrabbing) { softBody.endGrab(0,0,0,0,0,0); isGrabbing = false; }
             isDragging = false;
             canvas.style.cursor = 'default';
         });
-        
         canvas.addEventListener('wheel', (e) => {
             camera.fov += e.deltaY * 0.05;
             camera.fov = Math.max(10, Math.min(120, camera.fov));
             e.preventDefault();
         }, { passive: false });
-        
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'F1') {
-                showWireframe = !showWireframe;
-                e.preventDefault();
-            } else if (e.key === 'F2') {
-                softBody.applyShapeRestoration(1.0);
-                e.preventDefault();
-            }
+            if (e.key === 'F1') { showWireframe = !showWireframe; e.preventDefault(); }
+            else if (e.key === 'F2') { softBody.applyShapeRestoration(1.0); e.preventDefault(); }
         });
 
         //=====================================================================
-        // Rendering
+        // Resize
         //=====================================================================
         function resize() {
             canvas.width = window.innerWidth;
@@ -648,95 +635,277 @@ f 2 5 3`;
         resize();
         window.addEventListener('resize', resize);
 
-        const mainLocs = {
-            aPosition: gl.getAttribLocation(mainProgram, 'aPosition'),
-            aNormal: gl.getAttribLocation(mainProgram, 'aNormal'),
-            uModel: gl.getUniformLocation(mainProgram, 'uModel'),
-            uView: gl.getUniformLocation(mainProgram, 'uView'),
-            uProjection: gl.getUniformLocation(mainProgram, 'uProjection'),
-            uLightPos: gl.getUniformLocation(mainProgram, 'uLightPos'),
-            uLightColor: gl.getUniformLocation(mainProgram, 'uLightColor'),
-            uColor: gl.getUniformLocation(mainProgram, 'uColor'),
-            uViewPos: gl.getUniformLocation(mainProgram, 'uViewPos')
-        };
-        
-        const wireLocs = {
-            aPosition: gl.getAttribLocation(wireProgram, 'aPosition'),
-            uModel: gl.getUniformLocation(wireProgram, 'uModel'),
-            uView: gl.getUniformLocation(wireProgram, 'uView'),
-            uProjection: gl.getUniformLocation(wireProgram, 'uProjection'),
-            uColor: gl.getUniformLocation(wireProgram, 'uColor')
-        };
-
-        // Hide loading, show UI
+        // UI表示
         document.getElementById('loading').style.display = 'none';
         document.getElementById('info').style.display = 'block';
         document.getElementById('controls').style.display = 'block';
 
-        // FPS counter
         let frameCount = 0;
         let lastFpsTime = performance.now();
 
         //=====================================================================
-        // Main Loop
+        // ===== WebXR 追加部分 =====
         //=====================================================================
-        const dt = 1/60;
-        
-        function render() {
-            // Physics
-            softBody.step(dt, 1);
-            updateBuffers();
-            
-            // Clear
-            gl.clearColor(0.1, 0.1, 0.15, 1.0);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-            gl.enable(gl.DEPTH_TEST);
-            
-            // Matrices
-            const aspect = canvas.width / canvas.height;
-            const view = camera.getViewMatrix();
-            const projection = camera.getProjectionMatrix(aspect);
-            const model = mat4.create();
-            const camPos = camera.getPosition();
-            
-            // Draw mesh
-            gl.useProgram(mainProgram);
-            
-            gl.uniformMatrix4fv(mainLocs.uModel, false, model);
-            gl.uniformMatrix4fv(mainLocs.uView, false, view);
-            gl.uniformMatrix4fv(mainLocs.uProjection, false, projection);
-            gl.uniform3fv(mainLocs.uLightPos, camPos);
-            gl.uniform3f(mainLocs.uLightColor, 1.0, 1.0, 1.0);
-            gl.uniform4f(mainLocs.uColor, 0.8, 0.2, 0.2, 1.0);
-            gl.uniform3fv(mainLocs.uViewPos, camPos);
-            
-            gl.bindBuffer(gl.ARRAY_BUFFER, visPositionBuffer);
-            gl.enableVertexAttribArray(mainLocs.aPosition);
-            gl.vertexAttribPointer(mainLocs.aPosition, 3, gl.FLOAT, false, 0, 0);
-            
-            gl.bindBuffer(gl.ARRAY_BUFFER, visNormalBuffer);
-            gl.enableVertexAttribArray(mainLocs.aNormal);
-            gl.vertexAttribPointer(mainLocs.aNormal, 3, gl.FLOAT, false, 0, 0);
-            
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, visIndexBuffer);
-            gl.drawElements(gl.TRIANGLES, numIndices, gl.UNSIGNED_SHORT, 0);
-            
-            // Draw wireframe
-            if (showWireframe && numTetEdgeVerts > 0) {
-                gl.useProgram(wireProgram);
-                
-                gl.uniformMatrix4fv(wireLocs.uModel, false, model);
-                gl.uniformMatrix4fv(wireLocs.uView, false, view);
-                gl.uniformMatrix4fv(wireLocs.uProjection, false, projection);
-                gl.uniform4f(wireLocs.uColor, 0.0, 1.0, 0.5, 1.0);
-                
-                gl.bindBuffer(gl.ARRAY_BUFFER, tetEdgeBuffer);
-                gl.enableVertexAttribArray(wireLocs.aPosition);
-                gl.vertexAttribPointer(wireLocs.aPosition, 3, gl.FLOAT, false, 0, 0);
-                
-                gl.drawArrays(gl.LINES, 0, numTetEdgeVerts);
+        let xrSession = null;
+        let xrRefSpace = null;
+        let xrGlLayer = null;
+        let isVRMode = false;
+
+        // VRボタンの表示・初期化
+        const vrButton = document.getElementById('vr-button');
+        const webxrStatus = document.getElementById('webxr-status');
+
+        if (navigator.xr) {
+            try {
+                const supported = await navigator.xr.isSessionSupported('immersive-vr');
+                if (supported) {
+                    vrButton.style.display = 'block';
+                    webxrStatus.textContent = 'WebXR: Quest 3 ready ✓';
+                    webxrStatus.style.color = '#00d4ff';
+                } else {
+                    webxrStatus.textContent = 'WebXR: VR not supported on this device';
+                }
+            } catch(e) {
+                webxrStatus.textContent = 'WebXR: ' + e.message;
             }
-            
+        } else {
+            webxrStatus.textContent = 'WebXR: Not available (use Quest browser)';
+        }
+
+        // VRセッション開始
+        async function startVR() {
+            try {
+                xrSession = await navigator.xr.requestSession('immersive-vr', {
+                    requiredFeatures: ['local-floor'],  // 床基準の座標系
+                    optionalFeatures: ['hand-tracking'] // ハンドトラッキング（任意）
+                });
+
+                // WebXR用レイヤーを作成してWebGLコンテキストをXRに渡す
+                await gl.makeXRCompatible();
+                xrGlLayer = new XRWebGLLayer(xrSession, gl);
+                xrSession.updateRenderState({ baseLayer: xrGlLayer });
+
+                // 座標系取得（local-floor = 床を原点とした立位空間）
+                xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+
+                // セッション終了ハンドラ
+                xrSession.addEventListener('end', () => {
+                    xrSession = null;
+                    xrRefSpace = null;
+                    xrGlLayer = null;
+                    isVRMode = false;
+                    vrButton.textContent = '🥽 Enter VR';
+                    vrButton.classList.remove('active');
+                    document.getElementById('vr-mode-indicator').style.display = 'none';
+                    // 通常レンダリングループに戻る
+                    requestAnimationFrame(renderNormal);
+                    console.log('XR session ended');
+                });
+
+                // コントローラー入力：Triggerでグラブ
+                xrSession.addEventListener('selectstart', onXRSelectStart);
+                xrSession.addEventListener('selectend',   onXRSelectEnd);
+
+                isVRMode = true;
+                vrButton.textContent = '⏹ Exit VR';
+                vrButton.classList.add('active');
+                document.getElementById('vr-mode-indicator').style.display = 'block';
+
+                // VRレンダリングループ開始
+                xrSession.requestAnimationFrame(renderXR);
+                console.log('XR session started');
+
+            } catch(e) {
+                console.error('Failed to start XR session:', e);
+                webxrStatus.textContent = 'VR Error: ' + e.message;
+            }
+        }
+
+        // VRセッション終了
+        async function stopVR() {
+            if (xrSession) await xrSession.end();
+        }
+
+        vrButton.addEventListener('click', () => {
+            if (isVRMode) stopVR();
+            else startVR();
+        });
+
+        //=====================================================================
+        // WebXR 入力管理
+        // コントローラー（Trigger）とハンドトラッキング（ピンチ）両対応
+        //=====================================================================
+
+        // ジョイント名定数
+        const THUMB_TIP  = 'thumb-tip';
+        const INDEX_TIP  = 'index-finger-tip';
+        const PINCH_START_DIST = 0.025; // 2.5cm以下でピンチ開始
+        const PINCH_END_DIST   = 0.045; // 4.5cm以上でピンチ終了
+
+        // グラブ状態
+        let xrGrabbing     = false;  // 現在グラブ中か
+        let xrGrabPending  = null;   // コントローラー: 次フレームで処理待ちのinputSource
+        let xrGrabHand     = null;   // ハンド: グラブ中の手('left'/'right')
+        let handPinching   = { left: false, right: false }; // ピンチ状態
+
+        // コントローラー: Trigger押下 → 次フレームでレイキャスト
+        function onXRSelectStart(event) {
+            const src = event.inputSource;
+            if (!src.targetRaySpace || !xrRefSpace) return;
+            if (src.hand) return; // ハンドトラッキング時はここでは処理しない
+            xrGrabPending = src;
+        }
+
+        // コントローラー: Trigger離す → グラブ終了
+        function onXRSelectEnd(event) {
+            if (event.inputSource.hand) return;
+            if (xrGrabbing && !xrGrabHand) {
+                softBody.endGrab(0, 0, 0, 0, 0, 0);
+                xrGrabbing = false;
+            }
+            xrGrabPending = null;
+        }
+
+        // ハンドジョイントの3D位置を取得するヘルパー
+        function getJointPos(hand, jointName, frame) {
+            const joint = hand.get(jointName);
+            if (!joint) return null;
+            const pose = frame.getJointPose(joint, xrRefSpace);
+            if (!pose) return null;
+            const p = pose.transform.position;
+            return [p.x, p.y, p.z];
+        }
+
+        // 2点間距離
+        function dist3(a, b) {
+            const dx=a[0]-b[0], dy=a[1]-b[1], dz=a[2]-b[2];
+            return Math.sqrt(dx*dx + dy*dy + dz*dz);
+        }
+
+        // ハンドトラッキング: ピンチ処理（フレームループ内から呼ぶ）
+        function processHandInput(frame) {
+            if (!xrSession) return;
+
+            for (const src of xrSession.inputSources) {
+                if (!src.hand) continue; // ハンドでないsourceはスキップ
+
+                const handedness = src.handedness; // 'left' or 'right'
+                const thumbTip = getJointPos(src.hand, THUMB_TIP, frame);
+                const indexTip = getJointPos(src.hand, INDEX_TIP, frame);
+                if (!thumbTip || !indexTip) continue;
+
+                const d = dist3(thumbTip, indexTip);
+                const wasPinching = handPinching[handedness];
+
+                if (!wasPinching && d < PINCH_START_DIST) {
+                    // ピンチ開始 → 人差し指先端位置でグラブ
+                    handPinching[handedness] = true;
+                    if (!xrGrabbing) {
+                        // 両手のどちらかがグラブを先取り
+                        const midX = (thumbTip[0] + indexTip[0]) / 2;
+                        const midY = (thumbTip[1] + indexTip[1]) / 2;
+                        const midZ = (thumbTip[2] + indexTip[2]) / 2;
+                        softBody.startGrab(midX, midY, midZ);
+                        xrGrabbing = true;
+                        xrGrabHand = handedness;
+                        console.log(`Pinch grab: ${handedness} hand`);
+                    }
+                } else if (wasPinching && d > PINCH_END_DIST) {
+                    // ピンチ終了
+                    handPinching[handedness] = false;
+                    if (xrGrabbing && xrGrabHand === handedness) {
+                        softBody.endGrab(0, 0, 0, 0, 0, 0);
+                        xrGrabbing = false;
+                        xrGrabHand = null;
+                    }
+                } else if (wasPinching && xrGrabbing && xrGrabHand === handedness) {
+                    // ピンチ継続中 → グラブ位置を更新（つまんで動かす）
+                    const midX = (thumbTip[0] + indexTip[0]) / 2;
+                    const midY = (thumbTip[1] + indexTip[1]) / 2;
+                    const midZ = (thumbTip[2] + indexTip[2]) / 2;
+                    softBody.moveGrabbed(midX, midY, midZ, 0, 0, 0);
+                }
+            }
+        }
+
+        // コントローラー: フレーム内でレイキャストしてグラブ位置を確定
+        function processControllerInput(frame) {
+            // グラブ開始
+            if (xrGrabPending && !xrGrabbing) {
+                const rayPose = frame.getPose(xrGrabPending.targetRaySpace, xrRefSpace);
+                if (rayPose) {
+                    const m = rayPose.transform.matrix;
+                    const origin = [m[12], m[13], m[14]];
+                    const dir    = [-m[8], -m[9], -m[10]]; // -Z方向 = コントローラー前方
+
+                    // メッシュとのレイキャスト
+                    const hit = raycastMesh({ origin, direction: dir });
+                    if (hit) {
+                        softBody.startGrab(hit.point[0], hit.point[1], hit.point[2]);
+                    } else {
+                        // メッシュに当たらなくても前方0.5mでグラブ
+                        softBody.startGrab(
+                            origin[0] + dir[0] * 0.5,
+                            origin[1] + dir[1] * 0.5,
+                            origin[2] + dir[2] * 0.5
+                        );
+                    }
+                    xrGrabbing = true;
+                    xrGrabHand = null;
+                    xrGrabPending = null;
+                }
+            }
+
+            // グラブ中: コントローラー位置でグラブ更新
+            if (xrGrabbing && !xrGrabHand) {
+                for (const src of xrSession.inputSources) {
+                    if (src.hand || !src.gripSpace) continue;
+                    const gripPose = frame.getPose(src.gripSpace, xrRefSpace);
+                    if (gripPose) {
+                        const m = gripPose.transform.matrix;
+                        softBody.moveGrabbed(m[12], m[13], m[14], 0, 0, 0);
+                        break;
+                    }
+                }
+            }
+        }
+
+        //=====================================================================
+        // VRレンダリングループ
+        // コントローラー・ハンドトラッキング両対応
+        //=====================================================================
+        function renderXR(time, frame) {
+            if (!xrSession) return;
+            xrSession.requestAnimationFrame(renderXR);
+
+            const pose = frame.getViewerPose(xrRefSpace);
+            if (!pose) return;
+
+            // 物理ステップ（左右で共通・1回のみ）
+            softBody.step(1/72, 1);
+            updateBuffers();
+
+            // 入力処理（コントローラー or ハンド）
+            processControllerInput(frame);
+            processHandInput(frame);
+
+            // フレームバッファにバインド
+            gl.bindFramebuffer(gl.FRAMEBUFFER, xrGlLayer.framebuffer);
+            gl.clearColor(0.05, 0.05, 0.1, 1.0);
+
+            // 左右の目を描画
+            for (const view of pose.views) {
+                const vp = xrGlLayer.getViewport(view);
+                gl.viewport(vp.x, vp.y, vp.width, vp.height);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                gl.enable(gl.DEPTH_TEST);
+
+                const viewMatrix = view.transform.inverse.matrix;
+                const projMatrix = view.projectionMatrix;
+                const p = view.transform.position;
+                drawScene(viewMatrix, projMatrix, [p.x, p.y, p.z]);
+            }
+
             // FPS
             frameCount++;
             const now = performance.now();
@@ -745,12 +914,43 @@ f 2 5 3`;
                 frameCount = 0;
                 lastFpsTime = now;
             }
+        }
+
+        //=====================================================================
+        // 通常（非VR）レンダリングループ（元のコードとほぼ同じ）
+        //=====================================================================
+        function renderNormal() {
+            if (isVRMode) return; // VRモード中は停止
+
+            softBody.step(1/60, 1);
+            updateBuffers();
             
-            requestAnimationFrame(render);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.clearColor(0.1, 0.1, 0.15, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+            
+            const aspect = canvas.width / canvas.height;
+            const view = camera.getViewMatrix();
+            const proj = camera.getProjectionMatrix(aspect);
+            const camPos = camera.getPosition();
+            
+            drawScene(view, proj, camPos);
+            
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFpsTime >= 1000) {
+                document.getElementById('fps').textContent = frameCount;
+                frameCount = 0;
+                lastFpsTime = now;
+            }
+            
+            requestAnimationFrame(renderNormal);
         }
         
-        render();
-        console.log('Simulation started');
+        // 通常ループ開始
+        renderNormal();
+        console.log('Simulation started. WebXR ready.');
         
     })();
     </script>
