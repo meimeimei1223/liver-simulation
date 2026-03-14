@@ -84,7 +84,7 @@
             cursor: pointer;
             box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
             transition: all 0.2s ease;
-            display: none; /* WebXR対応時のみ表示 */
+            display: none;
             z-index: 100;
         }
         #vr-button:hover {
@@ -138,7 +138,7 @@ model/liver_tetrahedral_mesh.txt
         Click on mesh: Grab &amp; drag<br>
         F1: Toggle wireframe<br>
         F2: Reset shape<br>
-        <span style="color:#00d4ff;">VR: Trigger = Grab</span>
+        <span style="color:#00d4ff;">VR: Trigger = Grab / Pinch = Grab</span>
     </div>
 
     <!-- WebXR VRボタン -->
@@ -233,7 +233,18 @@ model/liver_tetrahedral_mesh.txt
         cameraYaw: 0,
         cameraPitch: 10,
         cameraFov: 45,
-        fallbackCameraRadius: 5
+        fallbackCameraRadius: 5,
+
+        // ===== VRスケール設定 =====
+        // シミュレーション座標系がメートル換算で大きい場合に縮小する
+        // 例: シム空間が ~10単位 の場合、0.05 にすると VR内で約0.5m になる
+        vrScale: 0.05,
+        // VR内でオブジェクトを目の前の快適な位置に置く (x, y, z) メートル
+        vrOffset: [0.0, 1.2, -0.6],
+        // ピンチ位置がメッシュ頂点からこの距離(シム座標単位)以内ならグラブ開始
+        // vrScale=0.05 なら 1.0シム単位 = VR空間5cm
+        // 掴みにくければ大きく、誤爆が多ければ小さくする
+        pinchMeshThreshold: 1.0
     };
 
     //=========================================================================
@@ -242,10 +253,9 @@ model/liver_tetrahedral_mesh.txt
     (async function() {
         const canvas = document.getElementById('canvas');
 
-        // WebXR requires 'xr-compatible' context
         const gl = canvas.getContext('webgl', {
             antialias: true,
-            xrCompatible: true   // ← WebXR必須
+            xrCompatible: true
         });
         
         if (!gl) { alert('WebGL not supported'); return; }
@@ -290,7 +300,7 @@ model/liver_tetrahedral_mesh.txt
         );
 
         //=====================================================================
-        // Matrix Math (変更なし)
+        // Matrix Math
         //=====================================================================
         const mat4 = {
             create: () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
@@ -343,7 +353,15 @@ model/liver_tetrahedral_mesh.txt
                 out[14]=(m31*b01-m30*b03-m32*b00)*det;out[15]=(m20*b03-m21*b01+m22*b00)*det;
                 return out;
             },
-            fromXRPose: (m) => new Float32Array(m)  // XRViewerPose用
+            // スケール＋平行移動を含むモデル行列を作成
+            scaledTranslation: (scale, tx, ty, tz) => {
+                return new Float32Array([
+                    scale, 0,     0,     0,
+                    0,     scale, 0,     0,
+                    0,     0,     scale, 0,
+                    tx,    ty,    tz,    1
+                ]);
+            }
         };
         
         function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
@@ -352,7 +370,7 @@ model/liver_tetrahedral_mesh.txt
         function normalize(v) { const l = Math.sqrt(dot(v,v)); return l > 0 ? [v[0]/l, v[1]/l, v[2]/l] : v; }
 
         //=====================================================================
-        // Orbit Camera (変更なし)
+        // Orbit Camera
         //=====================================================================
         const camera = {
             target: [0, 0, 0],
@@ -378,7 +396,7 @@ model/liver_tetrahedral_mesh.txt
         };
 
         //=====================================================================
-        // Load WASM + Meshes (変更なし)
+        // Load WASM + Meshes
         //=====================================================================
         document.getElementById('loading').textContent = 'Loading WASM...';
         const Module = await SoftBodyModule();
@@ -439,7 +457,7 @@ SURFACE_TRIANGLES
         document.getElementById('meshMode').textContent = usingFallback ? 'Test Mesh' : 'Liver';
 
         //=====================================================================
-        // WebGL Buffers (変更なし)
+        // WebGL Buffers
         //=====================================================================
         const visPositionBuffer = gl.createBuffer();
         const visNormalBuffer = gl.createBuffer();
@@ -470,7 +488,7 @@ SURFACE_TRIANGLES
         updateBuffers();
 
         //=====================================================================
-        // Raycasting (変更なし)
+        // Raycasting
         //=====================================================================
         function screenToWorldRay(screenX, screenY) {
             const rect = canvas.getBoundingClientRect();
@@ -524,10 +542,12 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // 共通描画関数 - 通常モード・VRモード両方で使う
+        // 共通描画関数
+        // vrModelMatrix: VRモード時はスケール＋オフセット入りの行列を渡す
+        //                通常モード時は identity を渡す
         //=====================================================================
-        function drawScene(viewMatrix, projMatrix, viewPos) {
-            const model = mat4.create();
+        function drawScene(viewMatrix, projMatrix, viewPos, modelMatrix) {
+            const model = modelMatrix || mat4.create();
             
             gl.useProgram(mainProgram);
             gl.uniformMatrix4fv(gl.getUniformLocation(mainProgram, 'uModel'), false, model);
@@ -566,7 +586,7 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // Input Handling (変更なし)
+        // Input Handling
         //=====================================================================
         let isDragging = false;
         let isGrabbing = false;
@@ -576,7 +596,7 @@ SURFACE_TRIANGLES
         
         canvas.addEventListener('mousedown', (e) => {
             lastMouse = { x: e.clientX, y: e.clientY };
-            if (!window.softBody) return; // WASMロード前はスキップ
+            if (!window.softBody) return;
             if (e.button === 0) {
                 const ray = screenToWorldRay(e.clientX, e.clientY);
                 const hit = raycastMesh(ray);
@@ -645,14 +665,13 @@ SURFACE_TRIANGLES
         let lastFpsTime = performance.now();
 
         //=====================================================================
-        // ===== WebXR 追加部分 =====
+        // ===== WebXR =====
         //=====================================================================
         let xrSession = null;
         let xrRefSpace = null;
         let xrGlLayer = null;
         let isVRMode = false;
 
-        // VRボタンの表示・初期化
         const vrButton = document.getElementById('vr-button');
         const webxrStatus = document.getElementById('webxr-status');
 
@@ -673,23 +692,19 @@ SURFACE_TRIANGLES
             webxrStatus.textContent = 'WebXR: Not available (use Quest browser)';
         }
 
-        // VRセッション開始
         async function startVR() {
             try {
                 xrSession = await navigator.xr.requestSession('immersive-vr', {
-                    requiredFeatures: ['local-floor'],  // 床基準の座標系
-                    optionalFeatures: ['hand-tracking'] // ハンドトラッキング（任意）
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['hand-tracking']
                 });
 
-                // WebXR用レイヤーを作成してWebGLコンテキストをXRに渡す
                 await gl.makeXRCompatible();
                 xrGlLayer = new XRWebGLLayer(xrSession, gl);
                 xrSession.updateRenderState({ baseLayer: xrGlLayer });
 
-                // 座標系取得（local-floor = 床を原点とした立位空間）
                 xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
 
-                // セッション終了ハンドラ
                 xrSession.addEventListener('end', () => {
                     xrSession = null;
                     xrRefSpace = null;
@@ -698,12 +713,10 @@ SURFACE_TRIANGLES
                     vrButton.textContent = '🥽 Enter VR';
                     vrButton.classList.remove('active');
                     document.getElementById('vr-mode-indicator').style.display = 'none';
-                    // 通常レンダリングループに戻る
                     requestAnimationFrame(renderNormal);
                     console.log('XR session ended');
                 });
 
-                // コントローラー入力：Triggerでグラブ
                 xrSession.addEventListener('selectstart', onXRSelectStart);
                 xrSession.addEventListener('selectend',   onXRSelectEnd);
 
@@ -712,7 +725,6 @@ SURFACE_TRIANGLES
                 vrButton.classList.add('active');
                 document.getElementById('vr-mode-indicator').style.display = 'block';
 
-                // VRレンダリングループ開始
                 xrSession.requestAnimationFrame(renderXR);
                 console.log('XR session started');
 
@@ -722,7 +734,6 @@ SURFACE_TRIANGLES
             }
         }
 
-        // VRセッション終了
         async function stopVR() {
             if (xrSession) await xrSession.end();
         }
@@ -734,40 +745,37 @@ SURFACE_TRIANGLES
 
         //=====================================================================
         // WebXR 入力管理
-        // コントローラー（Trigger）とハンドトラッキング（ピンチ）両対応
         //=====================================================================
-
-        // ジョイント名定数
         const THUMB_TIP  = 'thumb-tip';
         const INDEX_TIP  = 'index-finger-tip';
-        const PINCH_START_DIST = 0.025; // 2.5cm以下でピンチ開始
-        const PINCH_END_DIST   = 0.045; // 4.5cm以上でピンチ終了
+        const PINCH_START_DIST = 0.025;
+        const PINCH_END_DIST   = 0.045;
 
-        // グラブ状態
-        let xrGrabbing     = false;  // 現在グラブ中か
-        let xrGrabPending  = null;   // コントローラー: 次フレームで処理待ちのinputSource
-        let xrGrabHand     = null;   // ハンド: グラブ中の手('left'/'right')
-        let handPinching   = { left: false, right: false }; // ピンチ状態
+        let xrGrabbing   = false;
+        let xrGrabHand   = null;   // 'left'/'right'=ハンド, null=コントローラー
+        let handPinching = { left: false, right: false };
 
-        // コントローラー: Trigger押下 → 次フレームでレイキャスト
+        // コントローラーのselect状態をイベントでも管理（ポーリングの補完）
+        let ctrlSelecting       = { left: false, right: false };
+        // gamepadポーリング用: 前フレームのボタン状態
+        let controllerWasPressing = { left: false, right: false };
+
         function onXRSelectStart(event) {
             const src = event.inputSource;
-            if (!src.targetRaySpace || !xrRefSpace) return;
-            if (src.hand) return; // ハンドトラッキング時はここでは処理しない
-            xrGrabPending = src;
+            if (!src || src.hand) return;
+            ctrlSelecting[src.handedness] = true;
         }
 
-        // コントローラー: Trigger離す → グラブ終了
         function onXRSelectEnd(event) {
-            if (event.inputSource.hand) return;
-            if (xrGrabbing && !xrGrabHand) {
+            const src = event.inputSource;
+            if (!src || src.hand) return;
+            ctrlSelecting[src.handedness] = false;
+            if (xrGrabbing && xrGrabHand === null) {
                 window.softBody.endGrab(0, 0, 0, 0, 0, 0);
                 xrGrabbing = false;
             }
-            xrGrabPending = null;
         }
 
-        // ハンドジョイントの3D位置を取得するヘルパー
         function getJointPos(hand, jointName, frame) {
             const joint = hand.get(jointName);
             if (!joint) return null;
@@ -777,20 +785,43 @@ SURFACE_TRIANGLES
             return [p.x, p.y, p.z];
         }
 
-        // 2点間距離
         function dist3(a, b) {
             const dx=a[0]-b[0], dy=a[1]-b[1], dz=a[2]-b[2];
             return Math.sqrt(dx*dx + dy*dy + dz*dz);
         }
 
-        // ハンドトラッキング: ピンチ処理（フレームループ内から呼ぶ）
+        // VR空間座標 → シミュレーション座標 に変換
+        // （モデル行列の逆変換: scale/offsetの逆）
+        function vrPosToSimPos(vrX, vrY, vrZ) {
+            const s = CONFIG.vrScale;
+            const [ox, oy, oz] = CONFIG.vrOffset;
+            return [
+                (vrX - ox) / s,
+                (vrY - oy) / s,
+                (vrZ - oz) / s
+            ];
+        }
+
+        // シム座標系で、点 simPos から最近傍の表面頂点までの距離を返す
+        // CONFIG.pinchMeshThreshold (シム単位) 以内なら「メッシュ上」と判定
+        function isNearMesh(simPos) {
+            const positions = window.softBody.getVisPositions();
+            const thresh2 = CONFIG.pinchMeshThreshold * CONFIG.pinchMeshThreshold;
+            const [px, py, pz] = simPos;
+            for (let i = 0; i < positions.length; i += 3) {
+                const dx = positions[i]   - px;
+                const dy = positions[i+1] - py;
+                const dz = positions[i+2] - pz;
+                if (dx*dx + dy*dy + dz*dz < thresh2) return true;
+            }
+            return false;
+        }
+
         function processHandInput(frame) {
             if (!xrSession) return;
-
             for (const src of xrSession.inputSources) {
-                if (!src.hand) continue; // ハンドでないsourceはスキップ
-
-                const handedness = src.handedness; // 'left' or 'right'
+                if (!src.hand) continue;
+                const handedness = src.handedness;
                 const thumbTip = getJointPos(src.hand, THUMB_TIP, frame);
                 const indexTip = getJointPos(src.hand, INDEX_TIP, frame);
                 if (!thumbTip || !indexTip) continue;
@@ -799,81 +830,130 @@ SURFACE_TRIANGLES
                 const wasPinching = handPinching[handedness];
 
                 if (!wasPinching && d < PINCH_START_DIST) {
-                    // ピンチ開始 → 人差し指先端位置でグラブ
+                    // ピンチジェスチャー自体は検出 → 状態だけ更新
                     handPinching[handedness] = true;
+
                     if (!xrGrabbing) {
-                        // 両手のどちらかがグラブを先取り
+                        // ピンチ中点をシム座標に変換
                         const midX = (thumbTip[0] + indexTip[0]) / 2;
                         const midY = (thumbTip[1] + indexTip[1]) / 2;
                         const midZ = (thumbTip[2] + indexTip[2]) / 2;
-                        window.softBody.startGrab(midX, midY, midZ);
-                        xrGrabbing = true;
-                        xrGrabHand = handedness;
-                        console.log(`Pinch grab: ${handedness} hand`);
+                        const simPos = vrPosToSimPos(midX, midY, midZ);
+
+                        // ★ 肝臓メッシュの近くでピンチした場合のみグラブ開始
+                        if (isNearMesh(simPos)) {
+                            window.softBody.startGrab(...simPos);
+                            xrGrabbing = true;
+                            xrGrabHand = handedness;
+                            console.log(`Pinch grab: ${handedness} hand (on mesh)`);
+                        } else {
+                            // メッシュ外のピンチは無視（Questメニュー等の誤爆を防ぐ）
+                            console.log(`Pinch ignored: ${handedness} hand (not on mesh)`);
+                        }
                     }
+
                 } else if (wasPinching && d > PINCH_END_DIST) {
-                    // ピンチ終了
                     handPinching[handedness] = false;
                     if (xrGrabbing && xrGrabHand === handedness) {
                         window.softBody.endGrab(0, 0, 0, 0, 0, 0);
                         xrGrabbing = false;
                         xrGrabHand = null;
                     }
+
                 } else if (wasPinching && xrGrabbing && xrGrabHand === handedness) {
-                    // ピンチ継続中 → グラブ位置を更新（つまんで動かす）
+                    // グラブ中: ピンチ位置を追従
                     const midX = (thumbTip[0] + indexTip[0]) / 2;
                     const midY = (thumbTip[1] + indexTip[1]) / 2;
                     const midZ = (thumbTip[2] + indexTip[2]) / 2;
-                    window.softBody.moveGrabbed(midX, midY, midZ, 0, 0, 0);
+                    const [sx, sy, sz] = vrPosToSimPos(midX, midY, midZ);
+                    window.softBody.moveGrabbed(sx, sy, sz, 0, 0, 0);
                 }
             }
         }
 
-        // コントローラー: フレーム内でレイキャストしてグラブ位置を確定
         function processControllerInput(frame) {
-            // グラブ開始
-            if (xrGrabPending && !xrGrabbing) {
-                const rayPose = frame.getPose(xrGrabPending.targetRaySpace, xrRefSpace);
-                if (rayPose) {
-                    const m = rayPose.transform.matrix;
-                    const origin = [m[12], m[13], m[14]];
-                    const dir    = [-m[8], -m[9], -m[10]]; // -Z方向 = コントローラー前方
+            for (const src of xrSession.inputSources) {
+                if (src.hand) continue; // ハンドトラッキングはprocessHandInputで処理
 
-                    // メッシュとのレイキャスト
-                    const hit = raycastMesh({ origin, direction: dir });
+                const handedness = src.handedness || 'right';
+
+                // ---- Questブラウザ対応: gamepadのbuttonでもトリガー検出 ----
+                // select イベントに加えて gamepad.buttons[0] をポーリングで補完する
+                let isPressingNow = ctrlSelecting[handedness];
+                if (!isPressingNow && src.gamepad) {
+                    // buttons[0] = trigger (WebXR Gamepad API)
+                    const trigger = src.gamepad.buttons[0];
+                    if (trigger && trigger.pressed) isPressingNow = true;
+                }
+
+                const wasPressing = controllerWasPressing[handedness] || false;
+                controllerWasPressing[handedness] = isPressingNow;
+
+                // ---- トリガー押下開始 ----
+                if (isPressingNow && !wasPressing && !xrGrabbing) {
+                    // targetRaySpace でレイを取得（gripSpaceより安定）
+                    const raySpace = src.targetRaySpace;
+                    if (!raySpace) continue;
+                    const rayPose = frame.getPose(raySpace, xrRefSpace);
+                    if (!rayPose) continue;
+
+                    const m = rayPose.transform.matrix;
+                    // WebXRのtargetRaySpace: 前方は -Z 列 (index 8,9,10)
+                    const origin = [m[12], m[13], m[14]];
+                    const dir    = normalize([-m[8], -m[9], -m[10]]);
+
+                    // VR空間レイ → シム座標系に変換
+                    // 方向ベクトルはスケール不要（正規化済み）、originだけ変換
+                    const simOrigin = vrPosToSimPos(...origin);
+                    // シム座標での方向も正規化（スケールによる歪みを除去）
+                    const s = CONFIG.vrScale;
+                    const simDir = normalize([dir[0], dir[1], dir[2]]); // 方向はそのまま
+
+                    const hit = raycastMesh({ origin: simOrigin, direction: simDir });
                     if (hit) {
+                        // メッシュにヒット → その点でグラブ
                         window.softBody.startGrab(hit.point[0], hit.point[1], hit.point[2]);
+                        console.log(`Controller grab: hit mesh at`, hit.point);
                     } else {
-                        // メッシュに当たらなくても前方0.5mでグラブ
-                        window.softBody.startGrab(
-                            origin[0] + dir[0] * 0.5,
-                            origin[1] + dir[1] * 0.5,
-                            origin[2] + dir[2] * 0.5
-                        );
+                        // ヒットなし → コントローラー先端付近（VR前方0.3m）でグラブ
+                        const tipVR = [
+                            origin[0] + dir[0] * 0.3,
+                            origin[1] + dir[1] * 0.3,
+                            origin[2] + dir[2] * 0.3
+                        ];
+                        const [sx, sy, sz] = vrPosToSimPos(...tipVR);
+                        window.softBody.startGrab(sx, sy, sz);
+                        console.log(`Controller grab: no hit, grabbing at`, [sx,sy,sz]);
                     }
                     xrGrabbing = true;
                     xrGrabHand = null;
-                    xrGrabPending = null;
                 }
-            }
 
-            // グラブ中: コントローラー位置でグラブ更新
-            if (xrGrabbing && !xrGrabHand) {
-                for (const src of xrSession.inputSources) {
-                    if (src.hand || !src.gripSpace) continue;
-                    const gripPose = frame.getPose(src.gripSpace, xrRefSpace);
+                // ---- トリガー押下終了 ----
+                if (!isPressingNow && wasPressing && xrGrabbing && xrGrabHand === null) {
+                    window.softBody.endGrab(0, 0, 0, 0, 0, 0);
+                    xrGrabbing = false;
+                    console.log(`Controller grab released`);
+                }
+
+                // ---- グラブ中: コントローラー位置を追従 ----
+                if (isPressingNow && xrGrabbing && xrGrabHand === null) {
+                    // gripSpace（手の握り位置）でグラブ点を更新
+                    const gripSpace = src.gripSpace || src.targetRaySpace;
+                    if (!gripSpace) continue;
+                    const gripPose = frame.getPose(gripSpace, xrRefSpace);
                     if (gripPose) {
                         const m = gripPose.transform.matrix;
-                        window.softBody.moveGrabbed(m[12], m[13], m[14], 0, 0, 0);
-                        break;
+                        const [sx, sy, sz] = vrPosToSimPos(m[12], m[13], m[14]);
+                        window.softBody.moveGrabbed(sx, sy, sz, 0, 0, 0);
                     }
+                    break; // 両手同時グラブは不要なので最初の1本のみ
                 }
             }
         }
 
         //=====================================================================
-        // VRレンダリングループ
-        // コントローラー・ハンドトラッキング両対応
+        // VRレンダリングループ（片目問題を修正）
         //=====================================================================
         function renderXR(time, frame) {
             if (!xrSession) return;
@@ -882,29 +962,40 @@ SURFACE_TRIANGLES
             const pose = frame.getViewerPose(xrRefSpace);
             if (!pose) return;
 
-            // 物理ステップ（左右で共通・1回のみ）
+            // 物理ステップ（1回のみ）
             window.softBody.step(1/72, 1);
             updateBuffers();
 
-            // 入力処理（コントローラー or ハンド）
+            // 入力処理
             processControllerInput(frame);
             processHandInput(frame);
 
+            // ===== VR用モデル行列 =====
+            // scale: シム空間をVR空間(m単位)に縮小
+            // offset: 目の前の見やすい位置に配置
+            const [ox, oy, oz] = CONFIG.vrOffset;
+            const vrModelMatrix = mat4.scaledTranslation(CONFIG.vrScale, ox, oy, oz);
+
             // フレームバッファにバインド
             gl.bindFramebuffer(gl.FRAMEBUFFER, xrGlLayer.framebuffer);
+
+            // ===== 修正点1: クリアはループの外で1回だけ =====
             gl.clearColor(0.05, 0.05, 0.1, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
 
             // 左右の目を描画
             for (const view of pose.views) {
                 const vp = xrGlLayer.getViewport(view);
                 gl.viewport(vp.x, vp.y, vp.width, vp.height);
-                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-                gl.enable(gl.DEPTH_TEST);
+
+                // ===== 修正点2: gl.clear() をビューループ内に置かない =====
+                // (削除済み)
 
                 const viewMatrix = view.transform.inverse.matrix;
                 const projMatrix = view.projectionMatrix;
                 const p = view.transform.position;
-                drawScene(viewMatrix, projMatrix, [p.x, p.y, p.z]);
+                drawScene(viewMatrix, projMatrix, [p.x, p.y, p.z], vrModelMatrix);
             }
 
             // FPS
@@ -918,10 +1009,10 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // 通常（非VR）レンダリングループ（元のコードとほぼ同じ）
+        // 通常（非VR）レンダリングループ
         //=====================================================================
         function renderNormal() {
-            if (isVRMode) return; // VRモード中は停止
+            if (isVRMode) return;
 
             window.softBody.step(1/60, 1);
             updateBuffers();
@@ -936,7 +1027,8 @@ SURFACE_TRIANGLES
             const proj = camera.getProjectionMatrix(aspect);
             const camPos = camera.getPosition();
             
-            drawScene(view, proj, camPos);
+            // 通常モードはidentity行列（スケールなし）
+            drawScene(view, proj, camPos, mat4.create());
             
             frameCount++;
             const now = performance.now();
@@ -949,7 +1041,6 @@ SURFACE_TRIANGLES
             requestAnimationFrame(renderNormal);
         }
         
-        // 通常ループ開始
         renderNormal();
         console.log('Simulation started. WebXR ready.');
         
