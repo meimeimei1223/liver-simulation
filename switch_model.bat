@@ -26,18 +26,24 @@ goto menu
 :high
 echo.
 echo 高解像度モデルに切り替え中...
-powershell -Command "(Get-Content 'index.html') -replace \"tetMeshPath: '.*'\", \"tetMeshPath: 'model/liver_highRes_mesh.txt'\" -replace \"visMeshPath: '.*'\", \"visMeshPath: 'model/soft_liver.obj'\" | Set-Content 'index.html'"
+powershell -Command "$content = [System.IO.File]::ReadAllText('index.html', [System.Text.Encoding]::UTF8); $content = $content -replace \"tetMeshPath: '[^']*'\", \"tetMeshPath: 'model/liver_highRes_mesh.txt'\"; $content = $content -replace \"visMeshPath: '[^']*'\", \"visMeshPath: 'model/soft_liver.obj'\"; [System.IO.File]::WriteAllText('index.html', $content, (New-Object System.Text.UTF8Encoding $false))"
 echo 完了: tetMeshPath = model/liver_highRes_mesh.txt
 echo 完了: visMeshPath  = model/soft_liver.obj
+echo.
+echo ブラウザを開いています...
+start http://localhost:8080
 pause
 goto menu
 
 :low
 echo.
 echo 低解像度モデルに切り替え中...
-powershell -Command "(Get-Content 'index.html') -replace \"tetMeshPath: '.*'\", \"tetMeshPath: 'model/liver_lowRes_mesh.txt'\" -replace \"visMeshPath: '.*'\", \"visMeshPath: 'model/soft_liver.obj'\" | Set-Content 'index.html'"
+powershell -Command "$content = [System.IO.File]::ReadAllText('index.html', [System.Text.Encoding]::UTF8); $content = $content -replace \"tetMeshPath: '[^']*'\", \"tetMeshPath: 'model/liver_lowRes_mesh.txt'\"; $content = $content -replace \"visMeshPath: '[^']*'\", \"visMeshPath: 'model/soft_liver.obj'\"; [System.IO.File]::WriteAllText('index.html', $content, (New-Object System.Text.UTF8Encoding $false))"
 echo 完了: tetMeshPath = model/liver_lowRes_mesh.txt
 echo 完了: visMeshPath  = model/soft_liver.obj
+echo.
+echo ブラウザを開いています...
+start http://localhost:8080
 pause
 goto menu
 
