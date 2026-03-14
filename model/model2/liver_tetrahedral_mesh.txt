@@ -1,12 +1,3 @@
-# CentVoxTetrahedralizerHybrid tetrahedral mesh
-# Detection mode: HYBRID
-# Grid: 40^3
-# Merge block size: 1
-# Protection layers: 2
-# Smoothed: Yes
-# Vertices: 10276
-# Tetrahedra: 41505
-
 VERTICES
 -1.308959 0.334916 -2.296103
 -1.236111 0.315605 -2.318166
