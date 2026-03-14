@@ -31,6 +31,7 @@ goto menu
 :model2
 copy /Y model\model2\liver_tetrahedral_mesh.txt model\liver_tetrahedral_mesh.txt
 copy /Y model\model2\liver.obj model\liver.obj
+python -c "f='model/liver_tetrahedral_mesh.txt';lines=open(f,encoding='utf-8').readlines();cleaned=[l for l in lines if not l.strip().startswith('#') and l.strip()];open(f,'w',encoding='utf-8').writelines(cleaned);print('Cleaned',len(lines)-len(cleaned),'comment lines')"
 echo Done: Switched to Model 2
 start http://localhost:8080
 pause
@@ -39,6 +40,7 @@ goto menu
 :model3
 copy /Y model\model3\liver_tetrahedral_mesh.txt model\liver_tetrahedral_mesh.txt
 copy /Y model\model3\liver.obj model\liver.obj
+python -c "f='model/liver_tetrahedral_mesh.txt';lines=open(f,encoding='utf-8').readlines();cleaned=[l for l in lines if not l.strip().startswith('#') and l.strip()];open(f,'w',encoding='utf-8').writelines(cleaned);print('Cleaned',len(lines)-len(cleaned),'comment lines')"
 echo Done: Switched to Model 3
 start http://localhost:8080
 pause
