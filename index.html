@@ -831,6 +831,17 @@ SURFACE_TRIANGLES
                 arButton.textContent = '🌍 AR Mode';
                 arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
             }
+            // VRセッション中ならblendModeを切り替え
+            if (xrSession && xrGlLayer) {
+                try {
+                    xrSession.updateRenderState({
+                        baseLayer: xrGlLayer,
+                        environmentBlendMode: arPassthrough ? 'alpha-blend' : 'opaque'
+                    });
+                } catch(e) {
+                    console.log('environmentBlendMode not supported:', e.message);
+                }
+            }
         });
 
         // VR調整ボタン
