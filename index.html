@@ -114,7 +114,7 @@
     <canvas id="canvas"></canvas>
     <div id="loading">Loading WASM & Meshes...</div>
     <div id="error">
-        <h2>⚠�E�EMesh files not found</h2>
+        <h2>⚠️ Mesh files not found</h2>
         <p>Please place the following files in the <b>model/</b> folder:</p>
         <code>
 model/liver.obj<br>
@@ -260,13 +260,15 @@ model/liver_tetrahedral_mesh.txt
         precision mediump float;
         uniform vec4 uColor;
         void main() {
-            // 丸ぁE��にする
+            // 丸い点にする
             vec2 c = gl_PointCoord - vec2(0.5);
             if (dot(c, c) > 0.25) discard;
             gl_FragColor = uColor;
         }
     </script>
 
+    <!-- Model Config (switch_model.bat で書き換え対象) -->
+    <script src="model_config.js"></script>
     <!-- WASM Module -->
     <script src="softbody.js"></script>
     
@@ -275,8 +277,8 @@ model/liver_tetrahedral_mesh.txt
     // Configuration
     //=========================================================================
     const CONFIG = {
-        tetMeshPath: 'model/liver_highRes_mesh.txt',
-        visMeshPath: 'model/soft_liver.obj',
+        tetMeshPath: window.MODEL_CONFIG?.tetMeshPath || 'model/liver_tetrahedral_mesh.txt',
+        visMeshPath: window.MODEL_CONFIG?.visMeshPath || 'model/liver.obj',
         edgeCompliance: 1.0,
         volCompliance: 0.0,
         cameraRadius: 20,
@@ -285,12 +287,12 @@ model/liver_tetrahedral_mesh.txt
         cameraFov: 45,
         fallbackCameraRadius: 5,
 
-        // ===== VRスケール設宁E=====
-        // メチE��ュ篁E��: ~6x4x5 単佁EↁE0.1倍で紁E0cm
+        // ===== VRスケール設定 =====
+        // メッシュ範囲: ~6x4x5 単位 → 0.1倍で約60cm
         vrScale: 0.1,
-        // VR冁E��オブジェクトを目の前に配置 (x, y, z) メートル
+        // VR内でオブジェクトを目の前に配置 (x, y, z) メートル
         vrOffset: [0.0, 1.4, -0.5],
-        // ピンチ位置がメチE��ュ頂点からこ�E距離(シム座標単佁E以冁E��らグラブ開姁E
+        // ピンチ位置がメッシュ頂点からこの距離(シム座標単位)以内ならグラブ開始
         pinchMeshThreshold: 1.0
     };
 
@@ -405,7 +407,7 @@ model/liver_tetrahedral_mesh.txt
                 out[14]=(m31*b01-m30*b03-m32*b00)*det;out[15]=(m20*b03-m21*b01+m22*b00)*det;
                 return out;
             },
-            // スケール�E�平行移動を含むモチE��行�Eを作�E
+            // スケール＋平行移動を含むモデル行列を作成
             scaledTranslation: (scale, tx, ty, tz) => {
                 return new Float32Array([
                     scale, 0,     0,     0,
@@ -544,7 +546,7 @@ SURFACE_TRIANGLES
             'pinky-finger-tip'
         ];
         const jointBuffer = gl.createBuffer();
-        const JOINT_POINT_SIZE = 8.0; // ピクセル�E�ER解像度で紁Ecm相当！E
+        const JOINT_POINT_SIZE = 8.0; // ピクセル（VR解像度で約1cm相当）
 
         function getHandJointPositions(hand, frame) {
             const positions = [];
@@ -575,7 +577,7 @@ SURFACE_TRIANGLES
                 const positions = getHandJointPositions(src.hand, frame);
                 if (positions.length === 0) continue;
 
-                // 左扁E靁E 右扁E緁E
+                // 左手=青, 右手=緑
                 if (src.handedness === 'left') {
                     gl.uniform4f(gl.getUniformLocation(pointProgram, 'uColor'), 0.2, 0.4, 1.0, 1.0);
                 } else {
@@ -659,8 +661,8 @@ SURFACE_TRIANGLES
 
         //=====================================================================
         // 共通描画関数
-        // vrModelMatrix: VRモード時はスケール�E�オフセチE��入り�E行�Eを渡ぁE
-        //                通常モード時は identity を渡ぁE
+        // vrModelMatrix: VRモード時はスケール＋オフセット入りの行列を渡す
+        //                通常モード時は identity を渡す
         //=====================================================================
         function drawScene(viewMatrix, projMatrix, viewPos, modelMatrix) {
             const model = modelMatrix || mat4.create();
@@ -702,33 +704,33 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // Input Handling�E�左右独立グラブ対応！E
+        // Input Handling（左右独立グラブ対応）
         //=====================================================================
         let isDragging = false;
         let lastMouse = { x: 0, y: 0 };
         let showWireframe = true;
 
-        // 左右独立グラブ管琁E
-        // WASMは1グラブ�Eみなので、毎フレーム交互に刁E��替えて擬似2グラチE
+        // 左右独立グラブ管理
+        // WASMは1グラブのみなので、毎フレーム交互に切り替えて擬似2グラブ
         const grabs = {
-            left:  { active: false, simPos: null, grabStartPos: null, grabDist: 0 },
-            right: { active: false, simPos: null, grabStartPos: null, grabDist: 0 }
+            left:  { active: false, simPos: null, grabDist: 0 },
+            right: { active: false, simPos: null, grabDist: 0 }
         };
-        let currentWasmGrab = null; // 'left'/'right'/null - WASMが今持ってぁE��グラチE
+        let currentWasmGrab = null; // 'left'/'right'/null - WASMが今持っているグラブ
 
-        // WASMグラブを持E���Eに刁E��替ぁE
+        // WASMグラブを指定側に切り替え
         function switchWasmGrab(side) {
             const g = grabs[side];
             if (!g.active || !g.simPos) return;
             if (currentWasmGrab !== side) {
                 if (currentWasmGrab) window.softBody.endGrab(0,0,0,0,0,0);
-                window.softBody.startGrab(g.grabStartPos[0], g.grabStartPos[1], g.grabStartPos[2]);
+                window.softBody.startGrab(g.simPos[0], g.simPos[1], g.simPos[2]);
                 currentWasmGrab = side;
             }
             window.softBody.moveGrabbed(g.simPos[0], g.simPos[1], g.simPos[2], 0,0,0);
         }
 
-        // 毎フレーム呼ぶ: 両手グラブ�E交互適用
+        // 毎フレーム呼ぶ: 両手グラブの交互適用
         let grabFrameToggle = false;
         function applyDualGrabs() {
             const lActive = grabs.left.active;
@@ -745,7 +747,7 @@ SURFACE_TRIANGLES
             } else if (!lActive && rActive) {
                 switchWasmGrab('right');
             } else {
-                // 両手同晁E 毎フレーム交亁E
+                // 両手同時: 毎フレーム交互
                 grabFrameToggle = !grabFrameToggle;
                 switchWasmGrab(grabFrameToggle ? 'left' : 'right');
             }
@@ -754,7 +756,6 @@ SURFACE_TRIANGLES
         function startGrabSide(side, simPos) {
             grabs[side].active = true;
             grabs[side].simPos = [...simPos];
-            grabs[side].grabStartPos = [...simPos];
         }
         function moveGrabSide(side, simPos) {
             if (!grabs[side].active) return;
@@ -763,7 +764,6 @@ SURFACE_TRIANGLES
         function endGrabSide(side) {
             grabs[side].active = false;
             grabs[side].simPos = null;
-            grabs[side].grabStartPos = null;
             if (currentWasmGrab === side) {
                 window.softBody.endGrab(0,0,0,0,0,0);
                 currentWasmGrab = null;
@@ -775,8 +775,8 @@ SURFACE_TRIANGLES
             endGrabSide('right');
         }
 
-        // PointerEvent�E�Eouse + touch + pen 統一�E�E
-        // 左クリチE��(button=0) ↁEleft, 右クリチE��(button=2) ↁEright
+        // PointerEvent（mouse + touch + pen 統一）
+        // 左クリック(button=0) → left, 右クリック(button=2) → right
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('pointerdown', (e) => {
             canvas.setPointerCapture(e.pointerId);
@@ -835,7 +835,7 @@ SURFACE_TRIANGLES
             isDragging = false;
             canvas.style.cursor = 'default';
         });
-        // タチE��操作でブラウザのスクロール/ズームを防止
+        // タッチ操作でブラウザのスクロール/ズームを防止
         canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
         canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
         canvas.addEventListener('wheel', (e) => {
@@ -876,7 +876,7 @@ SURFACE_TRIANGLES
         let isVRMode = false;
         let arPassthrough = false;
 
-        // VR調整パラメータ�E�リアルタイム変更可能�E�E
+        // VR調整パラメータ（リアルタイム変更可能）
         let liveVrScale = CONFIG.vrScale;
         let liveVrOffset = [...CONFIG.vrOffset];
 
@@ -886,18 +886,14 @@ SURFACE_TRIANGLES
 
         if (navigator.xr) {
             try {
-                const vrSupported = await navigator.xr.isSessionSupported('immersive-vr');
-                if (vrSupported) {
+                const supported = await navigator.xr.isSessionSupported('immersive-vr');
+                if (supported) {
                     vrButton.style.display = 'block';
-                    webxrStatus.textContent = 'WebXR: Quest 3 ready ✁E;
-                    webxrStatus.style.color = '#00d4ff';
-                }
-                const arSupported = await navigator.xr.isSessionSupported('immersive-ar');
-                if (arSupported) {
                     arButton.style.display = 'block';
-                }
-                if (!vrSupported && !arSupported) {
-                    webxrStatus.textContent = 'WebXR: VR/AR not supported on this device';
+                    webxrStatus.textContent = 'WebXR: Quest 3 ready ✓';
+                    webxrStatus.style.color = '#00d4ff';
+                } else {
+                    webxrStatus.textContent = 'WebXR: VR not supported on this device';
                 }
             } catch(e) {
                 webxrStatus.textContent = 'WebXR: ' + e.message;
@@ -906,21 +902,26 @@ SURFACE_TRIANGLES
             webxrStatus.textContent = 'WebXR: Not available (use Quest browser)';
         }
 
-        // AR Mode ボタン
-        arButton.addEventListener('click', async () => {
+        // AR Mode トグル
+        arButton.addEventListener('click', () => {
+            arPassthrough = !arPassthrough;
             if (arPassthrough) {
-                // AR終亁EↁE通常に戻めE
-                if (xrSession) await xrSession.end();
-                arPassthrough = false;
-                arButton.textContent = '🌍 AR Mode';
-                arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
-            } else {
-                // VRセチE��ョン中なら終亁E��てからAR開姁E
-                if (xrSession) await xrSession.end();
-                arPassthrough = true;
                 arButton.textContent = '🌍 AR: ON';
                 arButton.style.background = 'linear-gradient(135deg, #ffaa00, #cc7700)';
-                startAR();
+            } else {
+                arButton.textContent = '🌍 AR Mode';
+                arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
+            }
+            // VRセッション中ならblendModeを切り替え
+            if (xrSession && xrGlLayer) {
+                try {
+                    xrSession.updateRenderState({
+                        baseLayer: xrGlLayer,
+                        environmentBlendMode: arPassthrough ? 'alpha-blend' : 'opaque'
+                    });
+                } catch(e) {
+                    console.log('environmentBlendMode not supported:', e.message);
+                }
             }
         });
 
@@ -964,11 +965,11 @@ SURFACE_TRIANGLES
             try {
                 xrSession = await navigator.xr.requestSession('immersive-vr', {
                     requiredFeatures: ['local-floor'],
-                    optionalFeatures: ['hand-tracking']
+                    optionalFeatures: ['hand-tracking', 'passthrough']
                 });
 
                 await gl.makeXRCompatible();
-                xrGlLayer = new XRWebGLLayer(xrSession, gl);
+                xrGlLayer = new XRWebGLLayer(xrSession, gl, { alpha: true });
                 xrSession.updateRenderState({ baseLayer: xrGlLayer });
 
                 xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
@@ -1008,57 +1009,6 @@ SURFACE_TRIANGLES
             }
         }
 
-        async function startAR() {
-            try {
-                xrSession = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local-floor'],
-                    optionalFeatures: ['hand-tracking']
-                });
-
-                await gl.makeXRCompatible();
-                xrGlLayer = new XRWebGLLayer(xrSession, gl, { alpha: true });
-                xrSession.updateRenderState({ baseLayer: xrGlLayer });
-
-                xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
-
-                xrSession.addEventListener('end', () => {
-                    xrSession = null;
-                    xrRefSpace = null;
-                    xrGlLayer = null;
-                    isVRMode = false;
-                    arPassthrough = false;
-                    arButton.textContent = '🌍 AR Mode';
-                    arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
-                    document.getElementById('vr-mode-indicator').style.display = 'none';
-                    document.getElementById('vr-debug').style.display = 'none';
-                    document.getElementById('vr-controls').style.display = 'none';
-                    requestAnimationFrame(renderNormal);
-                    console.log('AR session ended');
-                });
-
-                xrSession.addEventListener('selectstart', onXRSelectStart);
-                xrSession.addEventListener('selectend',   onXRSelectEnd);
-
-                isVRMode = true;
-                arPassthrough = true;
-                document.getElementById('vr-mode-indicator').style.display = 'block';
-                document.getElementById('vr-debug').style.display = 'block';
-                document.getElementById('vr-controls').style.display = 'block';
-                updateVrDebugDisplay();
-                document.getElementById('dbg-verts').textContent = window.softBody.getNumVisVerts();
-
-                xrSession.requestAnimationFrame(renderXR);
-                console.log('AR session started (passthrough)');
-
-            } catch(e) {
-                console.error('Failed to start AR session:', e);
-                webxrStatus.textContent = 'AR Error: ' + e.message;
-                arPassthrough = false;
-                arButton.textContent = '🌍 AR Mode';
-                arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
-            }
-        }
-
         async function stopVR() {
             if (xrSession) await xrSession.end();
         }
@@ -1069,7 +1019,7 @@ SURFACE_TRIANGLES
         });
 
         //=====================================================================
-        // WebXR 入力管琁E��左右独立グラブ対応！E
+        // WebXR 入力管理（左右独立グラブ対応）
         //=====================================================================
         const THUMB_TIP  = 'thumb-tip';
         const INDEX_TIP  = 'index-finger-tip';
@@ -1078,9 +1028,9 @@ SURFACE_TRIANGLES
 
         let handPinching = { left: false, right: false };
 
-        // コントローラーのselect状態をイベントでも管琁E���Eーリングの補完！E
+        // コントローラーのselect状態をイベントでも管理（ポーリングの補完）
         let ctrlSelecting       = { left: false, right: false };
-        // gamepadポ�Eリング用: 前フレームのボタン状慁E
+        // gamepadポーリング用: 前フレームのボタン状態
         let controllerWasPressing = { left: false, right: false };
 
         function onXRSelectStart(event) {
@@ -1111,8 +1061,8 @@ SURFACE_TRIANGLES
             return Math.sqrt(dx*dx + dy*dy + dz*dz);
         }
 
-        // VR空間座樁EↁEシミュレーション座樁Eに変換
-        // �E�モチE��行�Eの送E��換: scale/offsetの送E��E
+        // VR空間座標 → シミュレーション座標 に変換
+        // （モデル行列の逆変換: scale/offsetの逆）
         function vrPosToSimPos(vrX, vrY, vrZ) {
             const s = liveVrScale;
             const [ox, oy, oz] = liveVrOffset;
@@ -1124,7 +1074,7 @@ SURFACE_TRIANGLES
         }
 
         // シム座標系で、点 simPos から最近傍の表面頂点までの距離を返す
-        // CONFIG.pinchMeshThreshold (シム単佁E 以冁E��ら「メチE��ュ上」と判宁E
+        // CONFIG.pinchMeshThreshold (シム単位) 以内なら「メッシュ上」と判定
         function isNearMesh(simPos) {
             const positions = window.softBody.getVisPositions();
             const thresh2 = CONFIG.pinchMeshThreshold * CONFIG.pinchMeshThreshold;
@@ -1192,7 +1142,7 @@ SURFACE_TRIANGLES
                 const wasPressing = controllerWasPressing[side] || false;
                 controllerWasPressing[side] = isPressingNow;
 
-                // トリガー押下開姁E
+                // トリガー押下開始
                 if (isPressingNow && !wasPressing && !grabs[side].active) {
                     const raySpace = src.targetRaySpace;
                     if (!raySpace) continue;
@@ -1214,12 +1164,12 @@ SURFACE_TRIANGLES
                     }
                 }
 
-                // トリガー押下終亁E
+                // トリガー押下終了
                 if (!isPressingNow && wasPressing && grabs[side].active) {
                     endGrabSide(side);
                 }
 
-                // グラブ中: コントローラー位置を追征E
+                // グラブ中: コントローラー位置を追従
                 if (isPressingNow && grabs[side].active) {
                     const gripSpace = src.gripSpace || src.targetRaySpace;
                     if (!gripSpace) continue;
@@ -1233,7 +1183,7 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // VRレンダリングループ（片目問題を修正�E�E
+        // VRレンダリングループ（片目問題を修正）
         //=====================================================================
         function renderXR(time, frame) {
             if (!xrSession) return;
@@ -1242,21 +1192,21 @@ SURFACE_TRIANGLES
             const pose = frame.getViewerPose(xrRefSpace);
             if (!pose) return;
 
-            // 入力�E琁EↁEグラブ適用 ↁE物琁E��チE��チE
+            // 入力処理 → グラブ適用 → 物理ステップ
             processControllerInput(frame);
             processHandInput(frame);
             applyDualGrabs();
             window.softBody.step(1/72, 1);
             updateBuffers();
 
-            // ===== VR用モチE��行�E�E�ライブパラメータ使用�E�E=====
+            // ===== VR用モデル行列（ライブパラメータ使用） =====
             const [ox, oy, oz] = liveVrOffset;
             const vrModelMatrix = mat4.scaledTranslation(liveVrScale, ox, oy, oz);
 
-            // フレームバッファにバインチE
+            // フレームバッファにバインド
             gl.bindFramebuffer(gl.FRAMEBUFFER, xrGlLayer.framebuffer);
 
-            // パススルー(AR)モーチE 透�E背景 / VRモーチE 暗い背景
+            // パススルー(AR)モード: 透明背景 / VRモード: 暗い背景
             if (arPassthrough) {
                 gl.clearColor(0, 0, 0, 0);
             } else {
@@ -1270,7 +1220,7 @@ SURFACE_TRIANGLES
                 const vp = xrGlLayer.getViewport(view);
                 gl.viewport(vp.x, vp.y, vp.width, vp.height);
 
-                // ===== 修正点2: gl.clear() をビューループ�Eに置かなぁE=====
+                // ===== 修正点2: gl.clear() をビューループ内に置かない =====
                 // (削除済み)
 
                 const viewMatrix = view.transform.inverse.matrix;
@@ -1278,11 +1228,11 @@ SURFACE_TRIANGLES
                 const p = view.transform.position;
                 drawScene(viewMatrix, projMatrix, [p.x, p.y, p.z], vrModelMatrix);
 
-                // 手�E関節を描画�E�ER空間座標そのまま�E�モチE��行�E不要E��E
+                // 手の関節を描画（VR空間座標そのまま＝モデル行列不要）
                 drawHandJoints(frame, viewMatrix, projMatrix);
             }
 
-            // FPS + チE��チE��
+            // FPS + デバッグ
             frameCount++;
             const now = performance.now();
             if (now - lastFpsTime >= 1000) {
@@ -1302,7 +1252,7 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // 通常�E�非VR�E�レンダリングルーチE
+        // 通常（非VR）レンダリングループ
         //=====================================================================
         function renderNormal() {
             if (isVRMode) return;
@@ -1321,7 +1271,7 @@ SURFACE_TRIANGLES
             const proj = camera.getProjectionMatrix(aspect);
             const camPos = camera.getPosition();
             
-            // 通常モード�Eidentity行�E�E�スケールなし！E
+            // 通常モードはidentity行列（スケールなし）
             drawScene(view, proj, camPos, mat4.create());
             
             frameCount++;
