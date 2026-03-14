@@ -702,28 +702,90 @@ SURFACE_TRIANGLES
         }
 
         //=====================================================================
-        // Input Handling
+        // Input Handling（左右独立グラブ対応）
         //=====================================================================
         let isDragging = false;
-        let isGrabbing = false;
-        let grabDistance = 0;
         let lastMouse = { x: 0, y: 0 };
         let showWireframe = true;
-        
-        // PointerEvent を使用（mouse + touch + pen を統一的に処理）
+
+        // 左右独立グラブ管理
+        // WASMは1グラブのみなので、毎フレーム交互に切り替えて擬似2グラブ
+        const grabs = {
+            left:  { active: false, simPos: null, grabDist: 0 },
+            right: { active: false, simPos: null, grabDist: 0 }
+        };
+        let currentWasmGrab = null; // 'left'/'right'/null - WASMが今持っているグラブ
+
+        // WASMグラブを指定側に切り替え
+        function switchWasmGrab(side) {
+            const g = grabs[side];
+            if (!g.active || !g.simPos) return;
+            if (currentWasmGrab !== side) {
+                if (currentWasmGrab) window.softBody.endGrab(0,0,0,0,0,0);
+                window.softBody.startGrab(g.simPos[0], g.simPos[1], g.simPos[2]);
+                currentWasmGrab = side;
+            }
+            window.softBody.moveGrabbed(g.simPos[0], g.simPos[1], g.simPos[2], 0,0,0);
+        }
+
+        // 毎フレーム呼ぶ: 両手グラブの交互適用
+        let grabFrameToggle = false;
+        function applyDualGrabs() {
+            const lActive = grabs.left.active;
+            const rActive = grabs.right.active;
+            if (!lActive && !rActive) {
+                if (currentWasmGrab) {
+                    window.softBody.endGrab(0,0,0,0,0,0);
+                    currentWasmGrab = null;
+                }
+                return;
+            }
+            if (lActive && !rActive) {
+                switchWasmGrab('left');
+            } else if (!lActive && rActive) {
+                switchWasmGrab('right');
+            } else {
+                // 両手同時: 毎フレーム交互
+                grabFrameToggle = !grabFrameToggle;
+                switchWasmGrab(grabFrameToggle ? 'left' : 'right');
+            }
+        }
+
+        function startGrabSide(side, simPos) {
+            grabs[side].active = true;
+            grabs[side].simPos = [...simPos];
+        }
+        function moveGrabSide(side, simPos) {
+            if (!grabs[side].active) return;
+            grabs[side].simPos = [...simPos];
+        }
+        function endGrabSide(side) {
+            grabs[side].active = false;
+            grabs[side].simPos = null;
+            if (currentWasmGrab === side) {
+                window.softBody.endGrab(0,0,0,0,0,0);
+                currentWasmGrab = null;
+            }
+        }
+
+        // PointerEvent（mouse + touch + pen 統一）
+        // 左クリック(button=0) → left, 右クリック(button=2) → right
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         canvas.addEventListener('pointerdown', (e) => {
             canvas.setPointerCapture(e.pointerId);
             lastMouse = { x: e.clientX, y: e.clientY };
             if (!window.softBody) return;
-            if (e.button === 0 || e.button === -1 || e.pointerType === 'touch') {
+            const isLeft  = (e.button === 0 || e.button === -1 || e.pointerType === 'touch');
+            const isRight = (e.button === 2);
+            if (isLeft || isRight) {
+                const side = isRight ? 'right' : 'left';
                 const ray = screenToWorldRay(e.clientX, e.clientY);
                 const hit = raycastMesh(ray);
                 if (hit) {
-                    isGrabbing = true;
-                    grabDistance = hit.t;
-                    window.softBody.startGrab(hit.point[0], hit.point[1], hit.point[2]);
+                    grabs[side].grabDist = hit.t;
+                    startGrabSide(side, hit.point);
                     canvas.style.cursor = 'grabbing';
-                } else {
+                } else if (isLeft) {
                     isDragging = true;
                     canvas.style.cursor = 'move';
                 }
@@ -732,11 +794,17 @@ SURFACE_TRIANGLES
         canvas.addEventListener('pointermove', (e) => {
             const dx = e.clientX - lastMouse.x;
             const dy = e.clientY - lastMouse.y;
-            if (isGrabbing) {
+            if (grabs.left.active && (e.buttons & 1 || e.pointerType === 'touch')) {
                 const ray = screenToWorldRay(e.clientX, e.clientY);
-                const newPos = [ray.origin[0]+ray.direction[0]*grabDistance, ray.origin[1]+ray.direction[1]*grabDistance, ray.origin[2]+ray.direction[2]*grabDistance];
-                window.softBody.moveGrabbed(newPos[0], newPos[1], newPos[2], 0, 0, 0);
-            } else if (isDragging) {
+                const d = grabs.left.grabDist;
+                moveGrabSide('left', [ray.origin[0]+ray.direction[0]*d, ray.origin[1]+ray.direction[1]*d, ray.origin[2]+ray.direction[2]*d]);
+            }
+            if (grabs.right.active && (e.buttons & 2)) {
+                const ray = screenToWorldRay(e.clientX, e.clientY);
+                const d = grabs.right.grabDist;
+                moveGrabSide('right', [ray.origin[0]+ray.direction[0]*d, ray.origin[1]+ray.direction[1]*d, ray.origin[2]+ray.direction[2]*d]);
+            }
+            if (isDragging) {
                 camera.yaw -= dx * 0.3;
                 camera.pitch += dy * 0.3;
                 camera.pitch = Math.max(-89, Math.min(89, camera.pitch));
@@ -745,12 +813,18 @@ SURFACE_TRIANGLES
         });
         canvas.addEventListener('pointerup', (e) => {
             canvas.releasePointerCapture(e.pointerId);
-            if (isGrabbing) { window.softBody.endGrab(0,0,0,0,0,0); isGrabbing = false; }
-            isDragging = false;
+            if (e.button === 0 || e.pointerType === 'touch') {
+                if (grabs.left.active) endGrabSide('left');
+                isDragging = false;
+            }
+            if (e.button === 2) {
+                if (grabs.right.active) endGrabSide('right');
+            }
             canvas.style.cursor = 'default';
         });
         canvas.addEventListener('pointerleave', () => {
-            if (isGrabbing) { window.softBody.endGrab(0,0,0,0,0,0); isGrabbing = false; }
+            if (grabs.left.active) endGrabSide('left');
+            if (grabs.right.active) endGrabSide('right');
             isDragging = false;
             canvas.style.cursor = 'default';
         });
@@ -938,15 +1012,13 @@ SURFACE_TRIANGLES
         });
 
         //=====================================================================
-        // WebXR 入力管理
+        // WebXR 入力管理（左右独立グラブ対応）
         //=====================================================================
         const THUMB_TIP  = 'thumb-tip';
         const INDEX_TIP  = 'index-finger-tip';
         const PINCH_START_DIST = 0.025;
         const PINCH_END_DIST   = 0.045;
 
-        let xrGrabbing   = false;
-        let xrGrabHand   = null;   // 'left'/'right'=ハンド, null=コントローラー
         let handPinching = { left: false, right: false };
 
         // コントローラーのselect状態をイベントでも管理（ポーリングの補完）
@@ -963,11 +1035,9 @@ SURFACE_TRIANGLES
         function onXRSelectEnd(event) {
             const src = event.inputSource;
             if (!src || src.hand) return;
-            ctrlSelecting[src.handedness] = false;
-            if (xrGrabbing && xrGrabHand === null) {
-                window.softBody.endGrab(0, 0, 0, 0, 0, 0);
-                xrGrabbing = false;
-            }
+            const hand = src.handedness || 'right';
+            ctrlSelecting[hand] = false;
+            endGrabSide(hand);
         }
 
         function getJointPos(hand, jointName, frame) {
@@ -1015,132 +1085,92 @@ SURFACE_TRIANGLES
             if (!xrSession) return;
             for (const src of xrSession.inputSources) {
                 if (!src.hand) continue;
-                const handedness = src.handedness;
+                const side = src.handedness; // 'left' or 'right'
                 const thumbTip = getJointPos(src.hand, THUMB_TIP, frame);
                 const indexTip = getJointPos(src.hand, INDEX_TIP, frame);
                 if (!thumbTip || !indexTip) continue;
 
                 const d = dist3(thumbTip, indexTip);
-                const wasPinching = handPinching[handedness];
+                const wasPinching = handPinching[side];
 
                 if (!wasPinching && d < PINCH_START_DIST) {
-                    // ピンチジェスチャー自体は検出 → 状態だけ更新
-                    handPinching[handedness] = true;
-
-                    if (!xrGrabbing) {
-                        // ピンチ中点をシム座標に変換
+                    handPinching[side] = true;
+                    if (!grabs[side].active) {
                         const midX = (thumbTip[0] + indexTip[0]) / 2;
                         const midY = (thumbTip[1] + indexTip[1]) / 2;
                         const midZ = (thumbTip[2] + indexTip[2]) / 2;
                         const simPos = vrPosToSimPos(midX, midY, midZ);
-
-                        // ★ 肝臓メッシュの近くでピンチした場合のみグラブ開始
                         if (isNearMesh(simPos)) {
-                            window.softBody.startGrab(...simPos);
-                            xrGrabbing = true;
-                            xrGrabHand = handedness;
-                            console.log(`Pinch grab: ${handedness} hand (on mesh)`);
-                        } else {
-                            // メッシュ外のピンチは無視（Questメニュー等の誤爆を防ぐ）
-                            console.log(`Pinch ignored: ${handedness} hand (not on mesh)`);
+                            startGrabSide(side, simPos);
+                            console.log(`Pinch grab: ${side} hand (on mesh)`);
                         }
                     }
 
                 } else if (wasPinching && d > PINCH_END_DIST) {
-                    handPinching[handedness] = false;
-                    if (xrGrabbing && xrGrabHand === handedness) {
-                        window.softBody.endGrab(0, 0, 0, 0, 0, 0);
-                        xrGrabbing = false;
-                        xrGrabHand = null;
+                    handPinching[side] = false;
+                    if (grabs[side].active) {
+                        endGrabSide(side);
                     }
 
-                } else if (wasPinching && xrGrabbing && xrGrabHand === handedness) {
-                    // グラブ中: ピンチ位置を追従
+                } else if (wasPinching && grabs[side].active) {
                     const midX = (thumbTip[0] + indexTip[0]) / 2;
                     const midY = (thumbTip[1] + indexTip[1]) / 2;
                     const midZ = (thumbTip[2] + indexTip[2]) / 2;
-                    const [sx, sy, sz] = vrPosToSimPos(midX, midY, midZ);
-                    window.softBody.moveGrabbed(sx, sy, sz, 0, 0, 0);
+                    moveGrabSide(side, vrPosToSimPos(midX, midY, midZ));
                 }
             }
         }
 
         function processControllerInput(frame) {
             for (const src of xrSession.inputSources) {
-                if (src.hand) continue; // ハンドトラッキングはprocessHandInputで処理
+                if (src.hand) continue;
+                const side = src.handedness || 'right';
 
-                const handedness = src.handedness || 'right';
-
-                // ---- Questブラウザ対応: gamepadのbuttonでもトリガー検出 ----
-                // select イベントに加えて gamepad.buttons[0] をポーリングで補完する
-                let isPressingNow = ctrlSelecting[handedness];
+                let isPressingNow = ctrlSelecting[side];
                 if (!isPressingNow && src.gamepad) {
-                    // buttons[0] = trigger (WebXR Gamepad API)
                     const trigger = src.gamepad.buttons[0];
                     if (trigger && trigger.pressed) isPressingNow = true;
                 }
 
-                const wasPressing = controllerWasPressing[handedness] || false;
-                controllerWasPressing[handedness] = isPressingNow;
+                const wasPressing = controllerWasPressing[side] || false;
+                controllerWasPressing[side] = isPressingNow;
 
-                // ---- トリガー押下開始 ----
-                if (isPressingNow && !wasPressing && !xrGrabbing) {
-                    // targetRaySpace でレイを取得（gripSpaceより安定）
+                // トリガー押下開始
+                if (isPressingNow && !wasPressing && !grabs[side].active) {
                     const raySpace = src.targetRaySpace;
                     if (!raySpace) continue;
                     const rayPose = frame.getPose(raySpace, xrRefSpace);
                     if (!rayPose) continue;
 
                     const m = rayPose.transform.matrix;
-                    // WebXRのtargetRaySpace: 前方は -Z 列 (index 8,9,10)
                     const origin = [m[12], m[13], m[14]];
                     const dir    = normalize([-m[8], -m[9], -m[10]]);
-
-                    // VR空間レイ → シム座標系に変換
-                    // 方向ベクトルはスケール不要（正規化済み）、originだけ変換
                     const simOrigin = vrPosToSimPos(...origin);
-                    // シム座標での方向も正規化（スケールによる歪みを除去）
-                    const simDir = normalize([dir[0], dir[1], dir[2]]); // 方向はそのまま
+                    const simDir = normalize([dir[0], dir[1], dir[2]]);
 
                     const hit = raycastMesh({ origin: simOrigin, direction: simDir });
                     if (hit) {
-                        // メッシュにヒット → その点でグラブ
-                        window.softBody.startGrab(hit.point[0], hit.point[1], hit.point[2]);
-                        console.log(`Controller grab: hit mesh at`, hit.point);
+                        startGrabSide(side, hit.point);
                     } else {
-                        // ヒットなし → コントローラー先端付近（VR前方0.3m）でグラブ
-                        const tipVR = [
-                            origin[0] + dir[0] * 0.3,
-                            origin[1] + dir[1] * 0.3,
-                            origin[2] + dir[2] * 0.3
-                        ];
-                        const [sx, sy, sz] = vrPosToSimPos(...tipVR);
-                        window.softBody.startGrab(sx, sy, sz);
-                        console.log(`Controller grab: no hit, grabbing at`, [sx,sy,sz]);
+                        const tipVR = [origin[0]+dir[0]*0.3, origin[1]+dir[1]*0.3, origin[2]+dir[2]*0.3];
+                        startGrabSide(side, vrPosToSimPos(...tipVR));
                     }
-                    xrGrabbing = true;
-                    xrGrabHand = null;
                 }
 
-                // ---- トリガー押下終了 ----
-                if (!isPressingNow && wasPressing && xrGrabbing && xrGrabHand === null) {
-                    window.softBody.endGrab(0, 0, 0, 0, 0, 0);
-                    xrGrabbing = false;
-                    console.log(`Controller grab released`);
+                // トリガー押下終了
+                if (!isPressingNow && wasPressing && grabs[side].active) {
+                    endGrabSide(side);
                 }
 
-                // ---- グラブ中: コントローラー位置を追従 ----
-                if (isPressingNow && xrGrabbing && xrGrabHand === null) {
-                    // gripSpace（手の握り位置）でグラブ点を更新
+                // グラブ中: コントローラー位置を追従
+                if (isPressingNow && grabs[side].active) {
                     const gripSpace = src.gripSpace || src.targetRaySpace;
                     if (!gripSpace) continue;
                     const gripPose = frame.getPose(gripSpace, xrRefSpace);
                     if (gripPose) {
                         const m = gripPose.transform.matrix;
-                        const [sx, sy, sz] = vrPosToSimPos(m[12], m[13], m[14]);
-                        window.softBody.moveGrabbed(sx, sy, sz, 0, 0, 0);
+                        moveGrabSide(side, vrPosToSimPos(m[12], m[13], m[14]));
                     }
-                    break; // 両手同時グラブは不要なので最初の1本のみ
                 }
             }
         }
@@ -1155,13 +1185,12 @@ SURFACE_TRIANGLES
             const pose = frame.getViewerPose(xrRefSpace);
             if (!pose) return;
 
-            // 物理ステップ（1回のみ）
-            window.softBody.step(1/72, 1);
-            updateBuffers();
-
-            // 入力処理
+            // 入力処理 → グラブ適用 → 物理ステップ
             processControllerInput(frame);
             processHandInput(frame);
+            applyDualGrabs();
+            window.softBody.step(1/72, 1);
+            updateBuffers();
 
             // ===== VR用モデル行列（ライブパラメータ使用） =====
             const [ox, oy, oz] = liveVrOffset;
@@ -1201,7 +1230,8 @@ SURFACE_TRIANGLES
             const now = performance.now();
             if (now - lastFpsTime >= 1000) {
                 document.getElementById('fps').textContent = frameCount;
-                document.getElementById('dbg-grab').textContent = xrGrabbing ? 'TRUE' : 'false';
+                document.getElementById('dbg-grab').textContent =
+                    (grabs.left.active ? 'L' : '-') + ' / ' + (grabs.right.active ? 'R' : '-');
                 updateVrDebugDisplay();
                 frameCount = 0;
                 lastFpsTime = now;
@@ -1214,9 +1244,10 @@ SURFACE_TRIANGLES
         function renderNormal() {
             if (isVRMode) return;
 
+            applyDualGrabs();
             window.softBody.step(1/60, 1);
             updateBuffers();
-            
+
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.clearColor(0.1, 0.1, 0.15, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
