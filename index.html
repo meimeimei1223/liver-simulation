@@ -134,7 +134,7 @@ model/liver_tetrahedral_mesh.txt
             <p>vrScale: <span id="dbg-scale">-</span></p>
             <p>Offset: <span id="dbg-offset">-</span></p>
             <p>Vertices: <span id="dbg-verts">-</span></p>
-            <p>Grabbing: <span id="dbg-grab">false</span></p>
+            <p>Grabbing: <span id="dbg-grab-l" style="color:#aaa;">L</span> / <span id="dbg-grab-r" style="color:#aaa;">R</span></p>
         </div>
         <div id="vr-controls" style="display:none;margin-top:10px;">
             <p style="color:#00d4ff;margin-bottom:6px;font-weight:bold;">VR Adjust</p>
@@ -768,6 +768,11 @@ SURFACE_TRIANGLES
             }
         }
 
+        function resetAllGrabs() {
+            endGrabSide('left');
+            endGrabSide('right');
+        }
+
         // PointerEvent（mouse + touch + pen 統一）
         // 左クリック(button=0) → left, 右クリック(button=2) → right
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -838,7 +843,7 @@ SURFACE_TRIANGLES
         }, { passive: false });
         document.addEventListener('keydown', (e) => {
             if (e.key === 'F1') { showWireframe = !showWireframe; e.preventDefault(); }
-            else if (e.key === 'F2') { window.softBody.applyShapeRestoration(1.0); e.preventDefault(); }
+            else if (e.key === 'F2') { resetAllGrabs(); window.softBody.applyShapeRestoration(1.0); e.preventDefault(); }
         });
 
         //=====================================================================
@@ -1230,8 +1235,14 @@ SURFACE_TRIANGLES
             const now = performance.now();
             if (now - lastFpsTime >= 1000) {
                 document.getElementById('fps').textContent = frameCount;
-                document.getElementById('dbg-grab').textContent =
-                    (grabs.left.active ? 'L' : '-') + ' / ' + (grabs.right.active ? 'R' : '-');
+                const dbgL = document.getElementById('dbg-grab-l');
+                const dbgR = document.getElementById('dbg-grab-r');
+                dbgL.textContent = grabs.left.active ? 'L' : '-';
+                dbgL.style.color = grabs.left.active ? '#4488ff' : '#aaa';
+                dbgL.style.fontWeight = grabs.left.active ? 'bold' : 'normal';
+                dbgR.textContent = grabs.right.active ? 'R' : '-';
+                dbgR.style.color = grabs.right.active ? '#44ff88' : '#aaa';
+                dbgR.style.fontWeight = grabs.right.active ? 'bold' : 'normal';
                 updateVrDebugDisplay();
                 frameCount = 0;
                 lastFpsTime = now;
