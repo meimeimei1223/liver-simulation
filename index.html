@@ -931,14 +931,18 @@ SURFACE_TRIANGLES
 
         if (navigator.xr) {
             try {
-                const supported = await navigator.xr.isSessionSupported('immersive-vr');
-                if (supported) {
+                const vrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+                if (vrSupported) {
                     vrButton.style.display = 'block';
-                    arButton.style.display = 'block';
                     webxrStatus.textContent = 'WebXR: Quest 3 ready ✓';
                     webxrStatus.style.color = '#00d4ff';
-                } else {
-                    webxrStatus.textContent = 'WebXR: VR not supported on this device';
+                }
+                const arSupported = await navigator.xr.isSessionSupported('immersive-ar');
+                if (arSupported) {
+                    arButton.style.display = 'block';
+                }
+                if (!vrSupported && !arSupported) {
+                    webxrStatus.textContent = 'WebXR: VR/AR not supported on this device';
                 }
             } catch(e) {
                 webxrStatus.textContent = 'WebXR: ' + e.message;
@@ -947,26 +951,56 @@ SURFACE_TRIANGLES
             webxrStatus.textContent = 'WebXR: Not available (use Quest browser)';
         }
 
-        // AR Mode トグル
-        arButton.addEventListener('click', () => {
-            arPassthrough = !arPassthrough;
-            if (arPassthrough) {
-                arButton.textContent = '🌍 AR: ON';
-                arButton.style.background = 'linear-gradient(135deg, #ffaa00, #cc7700)';
-            } else {
-                arButton.textContent = '🌍 AR Mode';
-                arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
+        // AR Mode: immersive-ar セッションを使用
+        arButton.addEventListener('click', async () => {
+            if (xrSession) {
+                await xrSession.end();
+                return;
             }
-            // VRセッション中ならblendModeを切り替え
-            if (xrSession && xrGlLayer) {
-                try {
-                    xrSession.updateRenderState({
-                        baseLayer: xrGlLayer,
-                        environmentBlendMode: arPassthrough ? 'alpha-blend' : 'opaque'
-                    });
-                } catch(e) {
-                    console.log('environmentBlendMode not supported:', e.message);
-                }
+            try {
+                xrSession = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['hand-tracking']
+                });
+                arPassthrough = true;
+
+                await gl.makeXRCompatible();
+                xrGlLayer = new XRWebGLLayer(xrSession, gl, { alpha: true });
+                xrSession.updateRenderState({ baseLayer: xrGlLayer });
+                xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+
+                xrSession.addEventListener('end', () => {
+                    xrSession = null;
+                    xrRefSpace = null;
+                    xrGlLayer = null;
+                    isVRMode = false;
+                    arPassthrough = false;
+                    arButton.textContent = '🌍 AR Mode';
+                    arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
+                    document.getElementById('vr-mode-indicator').style.display = 'none';
+                    document.getElementById('vr-debug').style.display = 'none';
+                    document.getElementById('vr-controls').style.display = 'none';
+                    requestAnimationFrame(renderNormal);
+                    console.log('AR session ended');
+                });
+
+                xrSession.addEventListener('selectstart', onXRSelectStart);
+                xrSession.addEventListener('selectend', onXRSelectEnd);
+
+                isVRMode = true;
+                arButton.textContent = '⏹ Exit AR';
+                arButton.style.background = 'linear-gradient(135deg, #ffaa00, #cc7700)';
+                document.getElementById('vr-mode-indicator').style.display = 'block';
+                document.getElementById('vr-debug').style.display = 'block';
+                document.getElementById('vr-controls').style.display = 'block';
+                updateVrDebugDisplay();
+                document.getElementById('dbg-verts').textContent = window.softBody.getNumVisVerts();
+
+                xrSession.requestAnimationFrame(renderXR);
+                console.log('AR session started (passthrough)');
+            } catch(e) {
+                console.error('AR failed:', e);
+                webxrStatus.textContent = 'AR Error: ' + e.message;
             }
         });
 
