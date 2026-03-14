@@ -222,6 +222,28 @@ model/liver_tetrahedral_mesh.txt
         }
     </script>
 
+    <!-- Hand Joint Point Shader -->
+    <script id="pointVertexShader" type="x-shader/x-vertex">
+        attribute vec3 aPosition;
+        uniform mat4 uView;
+        uniform mat4 uProjection;
+        uniform float uPointSize;
+        void main() {
+            gl_Position = uProjection * uView * vec4(aPosition, 1.0);
+            gl_PointSize = uPointSize;
+        }
+    </script>
+    <script id="pointFragmentShader" type="x-shader/x-fragment">
+        precision mediump float;
+        uniform vec4 uColor;
+        void main() {
+            // 丸い点にする
+            vec2 c = gl_PointCoord - vec2(0.5);
+            if (dot(c, c) > 0.25) discard;
+            gl_FragColor = uColor;
+        }
+    </script>
+
     <!-- WASM Module -->
     <script src="softbody.js"></script>
     
@@ -299,6 +321,11 @@ model/liver_tetrahedral_mesh.txt
         const wireProgram = createProgram(gl,
             document.getElementById('wireVertexShader').textContent,
             document.getElementById('wireFragmentShader').textContent
+        );
+
+        const pointProgram = createProgram(gl,
+            document.getElementById('pointVertexShader').textContent,
+            document.getElementById('pointFragmentShader').textContent
         );
 
         //=====================================================================
@@ -474,6 +501,70 @@ SURFACE_TRIANGLES
         
         const numIndices = indices.length;
         let numTetEdgeVerts = 0;
+
+        // ===== Hand Joint Rendering =====
+        const HAND_JOINT_NAMES = [
+            'wrist',
+            'thumb-metacarpal', 'thumb-phalanx-proximal',
+            'thumb-phalanx-distal', 'thumb-tip',
+            'index-finger-metacarpal', 'index-finger-phalanx-proximal',
+            'index-finger-phalanx-intermediate', 'index-finger-phalanx-distal',
+            'index-finger-tip',
+            'middle-finger-metacarpal', 'middle-finger-phalanx-proximal',
+            'middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal',
+            'middle-finger-tip',
+            'ring-finger-metacarpal', 'ring-finger-phalanx-proximal',
+            'ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal',
+            'ring-finger-tip',
+            'pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal',
+            'pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal',
+            'pinky-finger-tip'
+        ];
+        const jointBuffer = gl.createBuffer();
+        const JOINT_POINT_SIZE = 8.0; // ピクセル（VR解像度で約1cm相当）
+
+        function getHandJointPositions(hand, frame) {
+            const positions = [];
+            for (const name of HAND_JOINT_NAMES) {
+                const joint = hand.get(name);
+                if (!joint) continue;
+                const pose = frame.getJointPose(joint, xrRefSpace);
+                if (!pose) continue;
+                const p = pose.transform.position;
+                positions.push(p.x, p.y, p.z);
+            }
+            return positions;
+        }
+
+        function drawHandJoints(frame, viewMatrix, projMatrix) {
+            if (!xrSession) return;
+            gl.useProgram(pointProgram);
+            gl.uniformMatrix4fv(gl.getUniformLocation(pointProgram, 'uView'), false, viewMatrix);
+            gl.uniformMatrix4fv(gl.getUniformLocation(pointProgram, 'uProjection'), false, projMatrix);
+            gl.uniform1f(gl.getUniformLocation(pointProgram, 'uPointSize'), JOINT_POINT_SIZE);
+
+            const aPos = gl.getAttribLocation(pointProgram, 'aPosition');
+            gl.enableVertexAttribArray(aPos);
+            gl.bindBuffer(gl.ARRAY_BUFFER, jointBuffer);
+
+            for (const src of xrSession.inputSources) {
+                if (!src.hand) continue;
+                const positions = getHandJointPositions(src.hand, frame);
+                if (positions.length === 0) continue;
+
+                // 左手=青, 右手=緑
+                if (src.handedness === 'left') {
+                    gl.uniform4f(gl.getUniformLocation(pointProgram, 'uColor'), 0.2, 0.4, 1.0, 1.0);
+                } else {
+                    gl.uniform4f(gl.getUniformLocation(pointProgram, 'uColor'), 0.2, 1.0, 0.4, 1.0);
+                }
+
+                const data = new Float32Array(positions);
+                gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+                gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+                gl.drawArrays(gl.POINTS, 0, data.length / 3);
+            }
+        }
 
         function updateBuffers() {
             const positions = window.softBody.getVisPositions();
@@ -1008,6 +1099,9 @@ SURFACE_TRIANGLES
                 const projMatrix = view.projectionMatrix;
                 const p = view.transform.position;
                 drawScene(viewMatrix, projMatrix, [p.x, p.y, p.z], vrModelMatrix);
+
+                // 手の関節を描画（VR空間座標そのまま＝モデル行列不要）
+                drawHandJoints(frame, viewMatrix, projMatrix);
             }
 
             // FPS + デバッグ
