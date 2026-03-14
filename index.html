@@ -130,6 +130,11 @@ model/liver_tetrahedral_mesh.txt
         <p>Vis Vertices: <span id="visVerts">0</span></p>
         <p>Mode: <span id="meshMode">-</span></p>
         <p id="vr-mode-indicator" style="color:#00d4ff;display:none;">🥽 VR Mode</p>
+        <div id="vr-debug" style="display:none;color:#ffcc00;font-size:11px;margin-top:8px;">
+            <p>vrScale: <span id="dbg-scale">-</span></p>
+            <p>Vertices: <span id="dbg-verts">-</span></p>
+            <p>Grabbing: <span id="dbg-grab">false</span></p>
+        </div>
     </div>
     <div class="controls" style="display:none;" id="controls">
         <b>Controls:</b><br>
@@ -236,14 +241,11 @@ model/liver_tetrahedral_mesh.txt
         fallbackCameraRadius: 5,
 
         // ===== VRスケール設定 =====
-        // シミュレーション座標系がメートル換算で大きい場合に縮小する
-        // 例: シム空間が ~10単位 の場合、0.05 にすると VR内で約0.5m になる
-        vrScale: 0.05,
-        // VR内でオブジェクトを目の前の快適な位置に置く (x, y, z) メートル
-        vrOffset: [0.0, 1.2, -0.6],
+        // メッシュ範囲: ~6x4x5 単位 → 0.1倍で約60cm
+        vrScale: 0.1,
+        // VR内でオブジェクトを目の前に配置 (x, y, z) メートル
+        vrOffset: [0.0, 1.4, -0.5],
         // ピンチ位置がメッシュ頂点からこの距離(シム座標単位)以内ならグラブ開始
-        // vrScale=0.05 なら 1.0シム単位 = VR空間5cm
-        // 掴みにくければ大きく、誤爆が多ければ小さくする
         pinchMeshThreshold: 1.0
     };
 
@@ -594,10 +596,12 @@ SURFACE_TRIANGLES
         let lastMouse = { x: 0, y: 0 };
         let showWireframe = true;
         
-        canvas.addEventListener('mousedown', (e) => {
+        // PointerEvent を使用（mouse + touch + pen を統一的に処理）
+        canvas.addEventListener('pointerdown', (e) => {
+            canvas.setPointerCapture(e.pointerId);
             lastMouse = { x: e.clientX, y: e.clientY };
             if (!window.softBody) return;
-            if (e.button === 0) {
+            if (e.button === 0 || e.button === -1 || e.pointerType === 'touch') {
                 const ray = screenToWorldRay(e.clientX, e.clientY);
                 const hit = raycastMesh(ray);
                 if (hit) {
@@ -611,7 +615,7 @@ SURFACE_TRIANGLES
                 }
             }
         });
-        canvas.addEventListener('mousemove', (e) => {
+        canvas.addEventListener('pointermove', (e) => {
             const dx = e.clientX - lastMouse.x;
             const dy = e.clientY - lastMouse.y;
             if (isGrabbing) {
@@ -625,16 +629,20 @@ SURFACE_TRIANGLES
             }
             lastMouse = { x: e.clientX, y: e.clientY };
         });
-        canvas.addEventListener('mouseup', (e) => {
+        canvas.addEventListener('pointerup', (e) => {
+            canvas.releasePointerCapture(e.pointerId);
             if (isGrabbing) { window.softBody.endGrab(0,0,0,0,0,0); isGrabbing = false; }
             isDragging = false;
             canvas.style.cursor = 'default';
         });
-        canvas.addEventListener('mouseleave', () => {
+        canvas.addEventListener('pointerleave', () => {
             if (isGrabbing) { window.softBody.endGrab(0,0,0,0,0,0); isGrabbing = false; }
             isDragging = false;
             canvas.style.cursor = 'default';
         });
+        // タッチ操作でブラウザのスクロール/ズームを防止
+        canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+        canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
         canvas.addEventListener('wheel', (e) => {
             camera.fov += e.deltaY * 0.05;
             camera.fov = Math.max(10, Math.min(120, camera.fov));
@@ -713,6 +721,7 @@ SURFACE_TRIANGLES
                     vrButton.textContent = '🥽 Enter VR';
                     vrButton.classList.remove('active');
                     document.getElementById('vr-mode-indicator').style.display = 'none';
+                    document.getElementById('vr-debug').style.display = 'none';
                     requestAnimationFrame(renderNormal);
                     console.log('XR session ended');
                 });
@@ -724,6 +733,9 @@ SURFACE_TRIANGLES
                 vrButton.textContent = '⏹ Exit VR';
                 vrButton.classList.add('active');
                 document.getElementById('vr-mode-indicator').style.display = 'block';
+                document.getElementById('vr-debug').style.display = 'block';
+                document.getElementById('dbg-scale').textContent = CONFIG.vrScale;
+                document.getElementById('dbg-verts').textContent = window.softBody.getNumVisVerts();
 
                 xrSession.requestAnimationFrame(renderXR);
                 console.log('XR session started');
@@ -998,11 +1010,12 @@ SURFACE_TRIANGLES
                 drawScene(viewMatrix, projMatrix, [p.x, p.y, p.z], vrModelMatrix);
             }
 
-            // FPS
+            // FPS + デバッグ
             frameCount++;
             const now = performance.now();
             if (now - lastFpsTime >= 1000) {
                 document.getElementById('fps').textContent = frameCount;
+                document.getElementById('dbg-grab').textContent = xrGrabbing ? 'TRUE' : 'false';
                 frameCount = 0;
                 lastFpsTime = now;
             }
