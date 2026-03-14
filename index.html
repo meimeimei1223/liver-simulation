@@ -458,8 +458,9 @@ model/liver_tetrahedral_mesh.txt
         let usingFallback = false;
         
         try {
-            const tetResponse = await fetch(CONFIG.tetMeshPath);
-            const objResponse = await fetch(CONFIG.visMeshPath);
+            const cacheBust = '?v=' + Date.now();
+            const tetResponse = await fetch(CONFIG.tetMeshPath + cacheBust);
+            const objResponse = await fetch(CONFIG.visMeshPath + cacheBust);
             if (!tetResponse.ok || !objResponse.ok) throw new Error('not found');
             const rawTetData = await tetResponse.text();
             // # コメント行と空行を除去してWASMパーサーに渡す
