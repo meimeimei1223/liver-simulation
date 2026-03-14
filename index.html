@@ -267,8 +267,6 @@ model/liver_tetrahedral_mesh.txt
         }
     </script>
 
-    <!-- Model Config (switch_model.bat で書き換え対象) -->
-    <script src="model_config.js"></script>
     <!-- WASM Module -->
     <script src="softbody.js"></script>
     
@@ -277,8 +275,8 @@ model/liver_tetrahedral_mesh.txt
     // Configuration
     //=========================================================================
     const CONFIG = {
-        tetMeshPath: window.MODEL_CONFIG?.tetMeshPath || 'model/liver_tetrahedral_mesh.txt',
-        visMeshPath: window.MODEL_CONFIG?.visMeshPath || 'model/liver.obj',
+        tetMeshPath: 'model/liver_tetrahedral_mesh.txt',
+        visMeshPath: 'model/liver.obj',
         edgeCompliance: 1.0,
         volCompliance: 0.0,
         cameraRadius: 20,
@@ -510,6 +508,12 @@ SURFACE_TRIANGLES
         document.getElementById('visVerts').textContent = window.softBody.getNumVisVerts();
         document.getElementById('meshMode').textContent = usingFallback ? 'Test Mesh' : 'Liver';
 
+        if (window.softBody.getNumParticles() === 0) {
+            document.getElementById('meshMode').textContent = '⚠️ TET MESH ERROR';
+            document.getElementById('meshMode').style.color = '#ff6b6b';
+            console.error('Tet mesh failed to load - check file format');
+        }
+
         //=====================================================================
         // WebGL Buffers
         //=====================================================================
@@ -733,6 +737,7 @@ SURFACE_TRIANGLES
         // 毎フレーム呼ぶ: 両手グラブの交互適用
         let grabFrameToggle = false;
         function applyDualGrabs() {
+            if (!window.softBody || window.softBody.getNumParticles() === 0) return;
             const lActive = grabs.left.active;
             const rActive = grabs.right.active;
             if (!lActive && !rActive) {
@@ -754,8 +759,10 @@ SURFACE_TRIANGLES
         }
 
         function startGrabSide(side, simPos) {
+            if (!window.softBody || window.softBody.getNumParticles() === 0) return;
             grabs[side].active = true;
             grabs[side].simPos = [...simPos];
+            grabs[side].grabStartPos = [...simPos];
         }
         function moveGrabSide(side, simPos) {
             if (!grabs[side].active) return;
