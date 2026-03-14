@@ -132,8 +132,27 @@ model/liver_tetrahedral_mesh.txt
         <p id="vr-mode-indicator" style="color:#00d4ff;display:none;">🥽 VR Mode</p>
         <div id="vr-debug" style="display:none;color:#ffcc00;font-size:11px;margin-top:8px;">
             <p>vrScale: <span id="dbg-scale">-</span></p>
+            <p>Offset: <span id="dbg-offset">-</span></p>
             <p>Vertices: <span id="dbg-verts">-</span></p>
             <p>Grabbing: <span id="dbg-grab">false</span></p>
+        </div>
+        <div id="vr-controls" style="display:none;margin-top:10px;">
+            <p style="color:#00d4ff;margin-bottom:6px;font-weight:bold;">VR Adjust</p>
+            <p style="margin:4px 0;">Scale:
+                <button id="btn-s-down" style="padding:8px 16px;font-size:14px;cursor:pointer;">S-</button>
+                <button id="btn-s-up" style="padding:8px 16px;font-size:14px;cursor:pointer;">S+</button>
+            </p>
+            <p style="margin:4px 0;">Depth:
+                <button id="btn-near" style="padding:8px 16px;font-size:14px;cursor:pointer;">Near</button>
+                <button id="btn-far" style="padding:8px 16px;font-size:14px;cursor:pointer;">Far</button>
+            </p>
+            <p style="margin:4px 0;">Height:
+                <button id="btn-up" style="padding:8px 16px;font-size:14px;cursor:pointer;">Up</button>
+                <button id="btn-down" style="padding:8px 16px;font-size:14px;cursor:pointer;">Down</button>
+            </p>
+            <p style="margin:6px 0;">
+                <button id="btn-reset" style="padding:8px 16px;font-size:14px;cursor:pointer;background:#ff6b6b;color:#fff;border:none;border-radius:4px;">Reset</button>
+            </p>
         </div>
     </div>
     <div class="controls" style="display:none;" id="controls">
@@ -146,8 +165,12 @@ model/liver_tetrahedral_mesh.txt
         <span style="color:#00d4ff;">VR: Trigger = Grab / Pinch = Grab</span>
     </div>
 
-    <!-- WebXR VRボタン -->
+    <!-- WebXR VR/ARボタン -->
     <button id="vr-button">🥽 Enter VR</button>
+    <button id="ar-button" style="position:absolute;bottom:20px;right:200px;padding:14px 28px;
+        background:linear-gradient(135deg,#44cc44,#228822);color:#fff;border:none;border-radius:30px;
+        font-size:16px;font-weight:bold;cursor:pointer;box-shadow:0 4px 20px rgba(68,204,68,0.4);
+        display:none;z-index:100;">🌍 AR Mode</button>
     <div id="webxr-status"></div>
 
     <!-- Vertex Shader -->
@@ -770,8 +793,14 @@ SURFACE_TRIANGLES
         let xrRefSpace = null;
         let xrGlLayer = null;
         let isVRMode = false;
+        let arPassthrough = false;
+
+        // VR調整パラメータ（リアルタイム変更可能）
+        let liveVrScale = CONFIG.vrScale;
+        let liveVrOffset = [...CONFIG.vrOffset];
 
         const vrButton = document.getElementById('vr-button');
+        const arButton = document.getElementById('ar-button');
         const webxrStatus = document.getElementById('webxr-status');
 
         if (navigator.xr) {
@@ -779,6 +808,7 @@ SURFACE_TRIANGLES
                 const supported = await navigator.xr.isSessionSupported('immersive-vr');
                 if (supported) {
                     vrButton.style.display = 'block';
+                    arButton.style.display = 'block';
                     webxrStatus.textContent = 'WebXR: Quest 3 ready ✓';
                     webxrStatus.style.color = '#00d4ff';
                 } else {
@@ -791,15 +821,63 @@ SURFACE_TRIANGLES
             webxrStatus.textContent = 'WebXR: Not available (use Quest browser)';
         }
 
+        // AR Mode トグル
+        arButton.addEventListener('click', () => {
+            arPassthrough = !arPassthrough;
+            if (arPassthrough) {
+                arButton.textContent = '🌍 AR: ON';
+                arButton.style.background = 'linear-gradient(135deg, #ffaa00, #cc7700)';
+            } else {
+                arButton.textContent = '🌍 AR Mode';
+                arButton.style.background = 'linear-gradient(135deg, #44cc44, #228822)';
+            }
+        });
+
+        // VR調整ボタン
+        function updateVrDebugDisplay() {
+            document.getElementById('dbg-scale').textContent = liveVrScale.toFixed(3);
+            document.getElementById('dbg-offset').textContent =
+                `[${liveVrOffset[0].toFixed(1)}, ${liveVrOffset[1].toFixed(1)}, ${liveVrOffset[2].toFixed(1)}]`;
+        }
+        document.getElementById('btn-s-down').addEventListener('click', () => {
+            liveVrScale = Math.max(0.01, liveVrScale - 0.01);
+            updateVrDebugDisplay();
+        });
+        document.getElementById('btn-s-up').addEventListener('click', () => {
+            liveVrScale += 0.01;
+            updateVrDebugDisplay();
+        });
+        document.getElementById('btn-near').addEventListener('click', () => {
+            liveVrOffset[2] += 0.1;
+            updateVrDebugDisplay();
+        });
+        document.getElementById('btn-far').addEventListener('click', () => {
+            liveVrOffset[2] -= 0.1;
+            updateVrDebugDisplay();
+        });
+        document.getElementById('btn-up').addEventListener('click', () => {
+            liveVrOffset[1] += 0.1;
+            updateVrDebugDisplay();
+        });
+        document.getElementById('btn-down').addEventListener('click', () => {
+            liveVrOffset[1] -= 0.1;
+            updateVrDebugDisplay();
+        });
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            liveVrScale = 0.1;
+            liveVrOffset = [0.0, 1.4, -0.5];
+            updateVrDebugDisplay();
+        });
+
         async function startVR() {
             try {
                 xrSession = await navigator.xr.requestSession('immersive-vr', {
                     requiredFeatures: ['local-floor'],
-                    optionalFeatures: ['hand-tracking']
+                    optionalFeatures: ['hand-tracking', 'passthrough']
                 });
 
                 await gl.makeXRCompatible();
-                xrGlLayer = new XRWebGLLayer(xrSession, gl);
+                xrGlLayer = new XRWebGLLayer(xrSession, gl, { alpha: true });
                 xrSession.updateRenderState({ baseLayer: xrGlLayer });
 
                 xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
@@ -813,6 +891,7 @@ SURFACE_TRIANGLES
                     vrButton.classList.remove('active');
                     document.getElementById('vr-mode-indicator').style.display = 'none';
                     document.getElementById('vr-debug').style.display = 'none';
+                    document.getElementById('vr-controls').style.display = 'none';
                     requestAnimationFrame(renderNormal);
                     console.log('XR session ended');
                 });
@@ -825,7 +904,8 @@ SURFACE_TRIANGLES
                 vrButton.classList.add('active');
                 document.getElementById('vr-mode-indicator').style.display = 'block';
                 document.getElementById('vr-debug').style.display = 'block';
-                document.getElementById('dbg-scale').textContent = CONFIG.vrScale;
+                document.getElementById('vr-controls').style.display = 'block';
+                updateVrDebugDisplay();
                 document.getElementById('dbg-verts').textContent = window.softBody.getNumVisVerts();
 
                 xrSession.requestAnimationFrame(renderXR);
@@ -896,8 +976,8 @@ SURFACE_TRIANGLES
         // VR空間座標 → シミュレーション座標 に変換
         // （モデル行列の逆変換: scale/offsetの逆）
         function vrPosToSimPos(vrX, vrY, vrZ) {
-            const s = CONFIG.vrScale;
-            const [ox, oy, oz] = CONFIG.vrOffset;
+            const s = liveVrScale;
+            const [ox, oy, oz] = liveVrOffset;
             return [
                 (vrX - ox) / s,
                 (vrY - oy) / s,
@@ -1009,7 +1089,6 @@ SURFACE_TRIANGLES
                     // 方向ベクトルはスケール不要（正規化済み）、originだけ変換
                     const simOrigin = vrPosToSimPos(...origin);
                     // シム座標での方向も正規化（スケールによる歪みを除去）
-                    const s = CONFIG.vrScale;
                     const simDir = normalize([dir[0], dir[1], dir[2]]); // 方向はそのまま
 
                     const hit = raycastMesh({ origin: simOrigin, direction: simDir });
@@ -1073,17 +1152,19 @@ SURFACE_TRIANGLES
             processControllerInput(frame);
             processHandInput(frame);
 
-            // ===== VR用モデル行列 =====
-            // scale: シム空間をVR空間(m単位)に縮小
-            // offset: 目の前の見やすい位置に配置
-            const [ox, oy, oz] = CONFIG.vrOffset;
-            const vrModelMatrix = mat4.scaledTranslation(CONFIG.vrScale, ox, oy, oz);
+            // ===== VR用モデル行列（ライブパラメータ使用） =====
+            const [ox, oy, oz] = liveVrOffset;
+            const vrModelMatrix = mat4.scaledTranslation(liveVrScale, ox, oy, oz);
 
             // フレームバッファにバインド
             gl.bindFramebuffer(gl.FRAMEBUFFER, xrGlLayer.framebuffer);
 
-            // ===== 修正点1: クリアはループの外で1回だけ =====
-            gl.clearColor(0.05, 0.05, 0.1, 1.0);
+            // パススルー(AR)モード: 透明背景 / VRモード: 暗い背景
+            if (arPassthrough) {
+                gl.clearColor(0, 0, 0, 0);
+            } else {
+                gl.clearColor(0.05, 0.05, 0.1, 1.0);
+            }
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.enable(gl.DEPTH_TEST);
 
@@ -1110,6 +1191,7 @@ SURFACE_TRIANGLES
             if (now - lastFpsTime >= 1000) {
                 document.getElementById('fps').textContent = frameCount;
                 document.getElementById('dbg-grab').textContent = xrGrabbing ? 'TRUE' : 'false';
+                updateVrDebugDisplay();
                 frameCount = 0;
                 lastFpsTime = now;
             }
